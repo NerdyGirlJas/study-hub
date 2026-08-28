@@ -13,8 +13,20 @@ const DISPLAY_FONT = "'Fraunces', 'Playfair Display', serif";
 const BODY_FONT = "'Josefin Sans', sans-serif";
 const DATA_FONT = "'IBM Plex Mono', monospace";
 const FONT_IMPORT = "@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Josefin+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap');";
+const PRINT_STYLE = `
+@media print {
+  body * { visibility: hidden; }
+  #synthesis-print-target, #synthesis-print-target * { visibility: visible; }
+  #synthesis-print-target { position: absolute; top: 0; left: 0; }
+}`;
 
 const GRACE_LETTERS = ['Gather', 'Reckon', 'Address', 'Cultivate', 'Enrich'];
+const SUB_QUESTIONS = [
+  'SQ1 — Biomedical: what is physiologically happening in maternal burnout?',
+  'SQ2 — Ancestral: what has traditional/ancestral practice historically offered?',
+  'SQ3 — Evidence base: what does current clinical evidence say?',
+  'SQ4 — Clinical application: what actually happens with real clients?',
+];
 
 const TABS = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -22,6 +34,8 @@ const TABS = [
   { id: 'checkpoints', label: 'Checkpoints' },
   { id: 'thesis', label: 'Thesis workspace' },
   { id: 'cases', label: 'Case log' },
+  { id: 'media', label: 'Dissertation media journal' },
+  { id: 'synthesis', label: 'Weekly synthesis' },
   { id: 'framework', label: 'Framework builder' },
   { id: 'challenge', label: 'Challenge me' },
   { id: 'notes', label: 'Study notes' },
@@ -248,20 +262,21 @@ function Select(props) {
     fontSize: 13, fontFamily: BODY_FONT, textAlign: 'center', ...props.style,
   }}>{props.children}</select>;
 }
-function Badge({ children, color }) {
+function Badge({ children, color, textColor }) {
   return <span style={{
     display: 'inline-block', fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 999,
-    background: color || COLORS.lavenderLight, color: COLORS.ink, margin: '0 4px 4px 0', fontFamily: BODY_FONT,
+    background: color || COLORS.lavenderLight, color: textColor || COLORS.ink, margin: '0 4px 4px 0', fontFamily: BODY_FONT,
   }}>{children}</span>;
 }
 
 // ---------------- DASHBOARD ----------------
 
-function Dashboard({ thesis, tasks, questions, checkpoints, cases, setTab }) {
+function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal, synthesisLog, setTab }) {
   const openQuestions = questions.filter(q => !q.answer).length;
   const totalHours = tasks.reduce((s, t) => s + (Number(t.hours) || 0), 0);
   const doneHours = tasks.filter(t => t.status === 'done').reduce((s, t) => s + (Number(t.hours) || 0), 0);
   const openCheckpoints = checkpoints.filter(c => !c.done).length;
+  const contradicting = mediaJournal.filter(m => m.stance === 'Contradicts' || m.stance === 'Complicates').length;
 
   return (
     <div>
@@ -279,6 +294,13 @@ function Dashboard({ thesis, tasks, questions, checkpoints, cases, setTab }) {
           <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{cases.length}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Cases logged</div></Card>
           <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{openCheckpoints}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Checkpoints open</div></Card>
           <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{openQuestions}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Open questions</div></Card>
+        </div>
+      </Section>
+      <Section title="Dissertation media">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+          <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{mediaJournal.length}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Media logged</div></Card>
+          <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{contradicting}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Complicate/contradict thesis</div></Card>
+          <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{synthesisLog.length}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Weekly syntheses saved</div></Card>
         </div>
       </Section>
       <Section title="Backup">
@@ -609,6 +631,362 @@ function ExportImport() {
   );
 }
 
+// ---------------- DISSERTATION MEDIA JOURNAL ----------------
+
+const MEDIA_TYPES = ['Book', 'Study/paper', 'Documentary', 'Podcast', 'Lecture/course', 'Article', 'Other'];
+const EVIDENCE_TYPES = ['RCT', 'Cohort study', 'Case series', 'In-vitro', 'Systematic review', 'Traditional use', 'Memoir/narrative', 'Other'];
+const THESIS_STANCE = ['Supports', 'Complicates', 'Contradicts', 'Unclear yet'];
+
+const EMPTY_MEDIA = {
+  title: '', creator: '', mediaType: 'Book', evidenceType: 'Other', stance: 'Supports',
+  subQuestions: [], graceLetters: [], summary: '', critique: '', quote: '',
+};
+
+function LibraryBridgeImport({ bridge, saveBridge, onDraftFromImport }) {
+  const [siteUrl, setSiteUrl] = useState(bridge.siteUrl || 'https://root-restore-library-tracker.netlify.app');
+  const [libraryKey, setLibraryKey] = useState(bridge.libraryKey || '');
+  const [pending, setPending] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [expanded, setExpanded] = useState(false);
+
+  const fetchPending = async () => {
+    if (!libraryKey.trim()) { setError('Enter your Library Tracker key first.'); return; }
+    setLoading(true); setError('');
+    try {
+      const res = await fetch(`${siteUrl.replace(/\/$/, '')}/api/library?key=${encodeURIComponent(libraryKey.trim())}`);
+      const json = await res.json();
+      const dailyLogs = (json.data && json.data.dailyLogs) || [];
+      const importedIds = bridge.importedIds || [];
+      const fresh = dailyLogs.filter(l => l.lane === 'Dissertation' && !importedIds.includes(l.id));
+      setPending(fresh);
+      saveBridge({ ...bridge, siteUrl, libraryKey: libraryKey.trim() });
+    } catch (e) {
+      setError('Could not reach your Library Tracker — check the site URL and key, and that the app is deployed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const markHandled = (id) => {
+    saveBridge({ ...bridge, importedIds: [...(bridge.importedIds || []), id] });
+    setPending(prev => prev.filter(p => p.id !== id));
+  };
+
+  const draft = (log) => {
+    onDraftFromImport(log);
+    markHandled(log.id);
+  };
+
+  return (
+    <Section title="Import from Library Tracker">
+      <Card style={{ textAlign: 'left' }}>
+        <p style={{ margin: '0 0 10px', fontSize: 12, color: COLORS.sage }}>
+          Pulls Dissertation-lane entries from your Daily Reading Log — the same sync key your Library Tracker
+          already uses. Drafting an entry carries the title over; you still write the actual critique here.
+        </p>
+        {expanded && <>
+          <TextInput placeholder="Library Tracker site URL" value={siteUrl} onChange={e => setSiteUrl(e.target.value)} style={{ marginBottom: 8 }} />
+        </>}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <TextInput placeholder="Your Library Tracker key" value={libraryKey} onChange={e => setLibraryKey(e.target.value)} style={{ flex: 1 }} />
+          <Button onClick={fetchPending} style={{ opacity: loading ? 0.6 : 1 }}>{loading ? 'Checking...' : 'Check for handoffs'}</Button>
+        </div>
+        <button onClick={() => setExpanded(x => !x)} style={{ border: 'none', background: 'none', color: COLORS.sage, fontSize: 11, textDecoration: 'underline', cursor: 'pointer', marginTop: 6, padding: 0 }}>
+          {expanded ? 'Hide site URL setting' : 'Using a different site URL?'}
+        </button>
+        {error && <p style={{ fontSize: 12, color: '#a0524a', marginTop: 8 }}>{error}</p>}
+      </Card>
+      {pending.length > 0 && pending.map(log => (
+        <Card key={log.id} style={{ textAlign: 'left' }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{log.title}</div>
+          <div style={{ fontSize: 12, color: COLORS.sage }}>{log.dateLabel} · Dissertation lane{log.takeaway ? ` · "${log.takeaway}"` : ''}</div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, justifyContent: 'center' }}>
+            <Button onClick={() => draft(log)}>Draft entry from this</Button>
+            <Button variant="secondary" onClick={() => markHandled(log.id)}>Skip — don't ask again</Button>
+          </div>
+        </Card>
+      ))}
+    </Section>
+  );
+}
+
+function DissertationMedia({ entries, saveEntries, onPromoteCitation, onPromoteFrameworkGap, bridge, saveBridge }) {
+  const [form, setForm] = useState(EMPTY_MEDIA);
+  const [expanded, setExpanded] = useState(false);
+
+  const toggleMulti = (field, value) => {
+    setForm(f => {
+      const list = f[field].includes(value) ? f[field].filter(v => v !== value) : [...f[field], value];
+      return { ...f, [field]: list };
+    });
+  };
+
+  const addEntry = () => {
+    if (!form.title.trim()) return;
+    saveEntries([{ ...form, id: Date.now(), date: new Date().toLocaleDateString() }, ...entries]);
+    setForm(EMPTY_MEDIA);
+    setExpanded(false);
+  };
+  const removeEntry = (id) => { if (window.confirm('Delete this media journal entry permanently?')) saveEntries(entries.filter(e => e.id !== id)); };
+
+  const draftFromImport = (log) => {
+    setForm({ ...EMPTY_MEDIA, title: log.title });
+    setExpanded(true);
+  };
+
+  return (
+    <div>
+      <LibraryBridgeImport bridge={bridge} saveBridge={saveBridge} onDraftFromImport={draftFromImport} />
+      <Section title="Dissertation media journal">
+        <Card>
+          <p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>
+            For media consumed specifically for the dissertation. This is a stronger, more demanding critique than
+            general reading reflection — every entry has to take a stance on your working thesis, not just summarize.
+          </p>
+        </Card>
+      </Section>
+      <Section title={expanded ? 'New entry' : 'Log dissertation media'} right={
+        <Button variant="outline" onClick={() => setExpanded(e => !e)}>{expanded ? 'Collapse' : 'Expand form'}</Button>
+      }>
+        <Card style={{ textAlign: 'left' }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <TextInput placeholder="Title" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={{ flex: 2 }} />
+            <TextInput placeholder="Author/creator" value={form.creator} onChange={e => setForm({ ...form, creator: e.target.value })} style={{ flex: 1 }} />
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <Select value={form.mediaType} onChange={e => setForm({ ...form, mediaType: e.target.value })} style={{ flex: 1 }}>{MEDIA_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</Select>
+            <Select value={form.evidenceType} onChange={e => setForm({ ...form, evidenceType: e.target.value })} style={{ flex: 1 }}>{EVIDENCE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</Select>
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: 12, color: COLORS.azure, marginBottom: 4, textAlign: 'center' }}>Stance against your working thesis (required)</div>
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+              {THESIS_STANCE.map(s => (
+                <button key={s} onClick={() => setForm({ ...form, stance: s })} style={{
+                  border: `1px solid ${form.stance === s ? COLORS.sage : COLORS.lavenderLight}`,
+                  background: form.stance === s ? COLORS.sage : '#fff', color: form.stance === s ? '#fff' : COLORS.ink,
+                  borderRadius: 999, padding: '5px 12px', fontSize: 12, cursor: 'pointer', fontFamily: BODY_FONT,
+                }}>{s}</button>
+              ))}
+            </div>
+          </div>
+          {expanded && <>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 12, color: COLORS.azure, marginBottom: 4, textAlign: 'center' }}>Dissertation sub-question(s) this speaks to</div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+                {SUB_QUESTIONS.map(sq => (
+                  <button key={sq} onClick={() => toggleMulti('subQuestions', sq)} style={{
+                    border: `1px solid ${form.subQuestions.includes(sq) ? COLORS.azure : COLORS.lavenderLight}`,
+                    background: form.subQuestions.includes(sq) ? COLORS.azure : '#fff', color: form.subQuestions.includes(sq) ? '#fff' : COLORS.ink,
+                    borderRadius: 999, padding: '5px 10px', fontSize: 11, cursor: 'pointer', fontFamily: BODY_FONT,
+                  }}>{sq.split(' — ')[0]}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 12, color: COLORS.azure, marginBottom: 4, textAlign: 'center' }}>G.R.A.C.E. letter(s) this bears on</div>
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+                {GRACE_LETTERS.map(l => (
+                  <button key={l} onClick={() => toggleMulti('graceLetters', l)} style={{
+                    border: `1px solid ${form.graceLetters.includes(l) ? COLORS.sage : COLORS.lavenderLight}`,
+                    background: form.graceLetters.includes(l) ? COLORS.sage : '#fff', color: form.graceLetters.includes(l) ? '#fff' : COLORS.ink,
+                    borderRadius: 999, padding: '5px 10px', fontSize: 11, cursor: 'pointer', fontFamily: BODY_FONT,
+                  }}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <TextArea placeholder="Summary — what does this actually say?" value={form.summary} onChange={e => setForm({ ...form, summary: e.target.value })} style={{ marginBottom: 8 }} />
+            <TextArea placeholder="Critique — where is it strong, where is it thin, what would an honest peer reviewer say?" value={form.critique} onChange={e => setForm({ ...form, critique: e.target.value })} style={{ marginBottom: 8 }} />
+            <TextArea placeholder="A quote or passage worth keeping (optional)" value={form.quote} onChange={e => setForm({ ...form, quote: e.target.value })} style={{ marginBottom: 8 }} />
+          </>}
+          <Button onClick={addEntry}>Save entry</Button>
+        </Card>
+      </Section>
+      <Section title={`Journal (${entries.length})`}>
+        {entries.map(e => (
+          <Collapsible key={e.id} title={e.title} badge={e.stance} defaultOpen={false}>
+            <Card style={{ textAlign: 'left' }}>
+              <div style={{ marginBottom: 6 }}>
+                <Badge>{e.mediaType}</Badge><Badge color={COLORS.lavender}>{e.evidenceType}</Badge>
+                <Badge color={e.stance === 'Contradicts' ? '#f0d6d6' : COLORS.lavenderLight}>{e.stance}</Badge>
+              </div>
+              {e.creator && <p style={{ fontSize: 12, color: COLORS.sage, margin: '0 0 6px' }}>{e.creator} · {e.date}</p>}
+              {(e.subQuestions || []).map(sq => <Badge key={sq} color={COLORS.lavenderLight}>{sq.split(' — ')[0]}</Badge>)}
+              {(e.graceLetters || []).map(l => <Badge key={l}>{l}</Badge>)}
+              {e.summary && <p style={{ fontSize: 13, marginTop: 6 }}><b>Summary:</b> {e.summary}</p>}
+              {e.critique && <p style={{ fontSize: 13 }}><b>Critique:</b> {e.critique}</p>}
+              {e.quote && <p style={{ fontSize: 13, fontStyle: 'italic', color: COLORS.azure }}>"{e.quote}"</p>}
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+                <Button variant="secondary" onClick={() => onPromoteCitation(e)}>Send to citation bank</Button>
+                {e.stance !== 'Supports' && <Button variant="secondary" onClick={() => onPromoteFrameworkGap(e)}>Send to framework as gap</Button>}
+                <Button variant="danger" onClick={() => removeEntry(e.id)}>Remove</Button>
+              </div>
+            </Card>
+          </Collapsible>
+        ))}
+        {entries.length === 0 && <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>No dissertation media logged yet.</p></Card>}
+      </Section>
+    </div>
+  );
+}
+
+// ---------------- WEEKLY SYNTHESIS ----------------
+
+const SYNTHESIS_FORMATS = [
+  { id: 'square', label: 'Square post', w: 1080, h: 1080 },
+  { id: 'carousel', label: 'Carousel (multi-slide)', w: 1080, h: 1080 },
+  { id: 'story', label: 'Story (vertical)', w: 1080, h: 1920 },
+  { id: 'printable', label: 'Printable page', w: 850, h: 1100 },
+];
+
+function SynthesisSlide({ format, headline, insights, application, weekLabel, slideIndex, slideCount }) {
+  const isPrintable = format.id === 'printable';
+  const bg = isPrintable ? COLORS.white : COLORS.cream;
+  return (
+    <div style={{
+      width: format.w / 2, height: format.h / 2, background: bg, position: 'relative',
+      border: `1px solid ${COLORS.lavenderLight}`, padding: isPrintable ? 50 : 60, boxSizing: 'border-box',
+      display: 'flex', flexDirection: 'column', justifyContent: 'center', textAlign: 'center', fontFamily: BODY_FONT,
+    }}>
+      <div style={{ fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', color: COLORS.sage, fontWeight: 700, marginBottom: 10 }}>
+        Tulsi &amp; Grace · {weekLabel}{slideCount > 1 ? ` · ${slideIndex + 1}/${slideCount}` : ''}
+      </div>
+      <h2 style={{ fontFamily: DISPLAY_FONT, fontSize: isPrintable ? 22 : 26, color: COLORS.ink, margin: '0 0 20px', lineHeight: 1.3 }}>{headline}</h2>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
+        {insights.map((ins, i) => (
+          <p key={i} style={{ fontSize: isPrintable ? 13 : 15, color: COLORS.ink, margin: 0, lineHeight: 1.5, maxWidth: '90%' }}>
+            {ins}
+          </p>
+        ))}
+      </div>
+      {application && (
+        <p style={{ fontSize: 13, color: COLORS.azure, fontStyle: 'italic', marginTop: 20 }}>How I'm applying this: {application}</p>
+      )}
+    </div>
+  );
+}
+
+function WeeklySynthesis({ synthesisLog, saveSynthesisLog }) {
+  const [headline, setHeadline] = useState('');
+  const [insightsRaw, setInsightsRaw] = useState('');
+  const [application, setApplication] = useState('');
+  const [formatId, setFormatId] = useState('square');
+  const [exporting, setExporting] = useState(false);
+  const previewRef = React.useRef(null);
+
+  const insights = insightsRaw.split('\n').map(s => s.trim()).filter(Boolean).slice(0, 5);
+  const format = SYNTHESIS_FORMATS.find(f => f.id === formatId);
+  const weekLabel = `Week of ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+
+  // Carousel splits insights across slides: one per slide, plus a title
+  // slide and a closing "how I'm applying this" slide if present.
+  const carouselSlides = useMemo(() => {
+    if (formatId !== 'carousel') return null;
+    const slides = [{ headline, insights: [], application: null }];
+    insights.forEach(ins => slides.push({ headline: '', insights: [ins], application: null }));
+    if (application) slides.push({ headline: 'This week, I\'m applying it by...', insights: [], application });
+    return slides;
+  }, [formatId, headline, insights, application]);
+
+  const saveToLog = () => {
+    if (!headline.trim() && insights.length === 0) return;
+    saveSynthesisLog([{ id: Date.now(), date: new Date().toLocaleDateString(), headline, insights, application, formatId }, ...synthesisLog]);
+  };
+  const removeSynthesis = (id) => { if (window.confirm('Delete this saved synthesis permanently?')) saveSynthesisLog(synthesisLog.filter(s => s.id !== id)); };
+
+  const exportImage = async (node, filename) => {
+    setExporting(true);
+    try {
+      const html2canvas = (await import('html2canvas')).default;
+      const canvas = await html2canvas(node, { scale: 2, backgroundColor: null });
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (e) {
+      console.error('Export failed', e);
+      alert('Image export failed. Try again, or use the Printable format and print/save as PDF instead.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const doExport = async () => {
+    if (formatId === 'printable') { window.print(); return; }
+    if (formatId === 'carousel' && carouselSlides) {
+      for (let i = 0; i < carouselSlides.length; i++) {
+        const node = document.getElementById(`synthesis-slide-${i}`);
+        if (node) await exportImage(node, `synthesis-${weekLabel.replace(/\s+/g, '-')}-slide${i + 1}.png`);
+      }
+      return;
+    }
+    const node = document.getElementById('synthesis-slide-0');
+    if (node) await exportImage(node, `synthesis-${weekLabel.replace(/\s+/g, '-')}.png`);
+  };
+
+  return (
+    <div>
+      <Section title="This week's synthesis">
+        <Card>
+          <p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>
+            Across pleasure, dissertation, and business reading this week — what's one thing that actually
+            changed how you think? Write it once, then export it in whichever shape fits where you're sharing it.
+          </p>
+        </Card>
+      </Section>
+      <Section title="Compose">
+        <Card style={{ textAlign: 'left' }}>
+          <TextInput placeholder="Headline — the one big idea from this week" value={headline} onChange={e => setHeadline(e.target.value)} style={{ marginBottom: 8 }} />
+          <TextArea placeholder="Key insights, one per line (up to 5)" value={insightsRaw} onChange={e => setInsightsRaw(e.target.value)} style={{ marginBottom: 8, minHeight: 100 }} />
+          <TextInput placeholder="How I'm applying this (optional)" value={application} onChange={e => setApplication(e.target.value)} style={{ marginBottom: 8 }} />
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+            <Button variant="secondary" onClick={saveToLog}>Save to log</Button>
+          </div>
+        </Card>
+      </Section>
+      <Section title="Choose a shareable format">
+        <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
+          {SYNTHESIS_FORMATS.map(f => (
+            <button key={f.id} onClick={() => setFormatId(f.id)} style={{
+              border: `1px solid ${formatId === f.id ? COLORS.sage : COLORS.lavenderLight}`,
+              background: formatId === f.id ? COLORS.sage : '#fff', color: formatId === f.id ? '#fff' : COLORS.ink,
+              borderRadius: 999, padding: '7px 14px', fontSize: 12, cursor: 'pointer', fontFamily: BODY_FONT,
+            }}>{f.label}</button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+          <Button onClick={doExport} style={{ opacity: exporting ? 0.6 : 1 }}>
+            {exporting ? 'Exporting...' : formatId === 'printable' ? 'Print / save as PDF' : 'Download image'}
+          </Button>
+        </div>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }} ref={previewRef} id={formatId === 'printable' ? 'synthesis-print-target' : undefined}>
+          {formatId === 'carousel' && carouselSlides
+            ? carouselSlides.map((s, i) => (
+                <div key={i} id={`synthesis-slide-${i}`}>
+                  <SynthesisSlide format={format} headline={s.headline} insights={s.insights} application={s.application} weekLabel={weekLabel} slideIndex={i} slideCount={carouselSlides.length} />
+                </div>
+              ))
+            : (
+                <div id="synthesis-slide-0">
+                  <SynthesisSlide format={format} headline={headline || 'This week\'s synthesis'} insights={insights} application={application} weekLabel={weekLabel} slideIndex={0} slideCount={1} />
+                </div>
+              )}
+        </div>
+      </Section>
+      <Section title={`Past syntheses (${synthesisLog.length})`}>
+        {synthesisLog.map(s => (
+          <Card key={s.id}>
+            <div style={{ fontSize: 12, color: COLORS.sage }}>{s.date}</div>
+            <div style={{ fontFamily: DISPLAY_FONT, fontSize: 16, marginTop: 4 }}>{s.headline}</div>
+            {s.insights.map((ins, i) => <p key={i} style={{ fontSize: 13, margin: '4px 0' }}>{ins}</p>)}
+            <div style={{ marginTop: 6 }}><Button variant="danger" onClick={() => removeSynthesis(s.id)}>Remove</Button></div>
+          </Card>
+        ))}
+      </Section>
+    </div>
+  );
+}
+
 // ---------------- FRAMEWORK BUILDER ----------------
 
 function FrameworkBuilder({ framework, saveFramework }) {
@@ -662,6 +1040,7 @@ function FrameworkBuilder({ framework, saveFramework }) {
                   <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.azure, marginBottom: 4, textAlign: 'center' }}>{f.label}</div>
                   {fieldEntries.map(e => (
                     <Card key={e.id}>
+                      {e.provenance && <Badge color={COLORS.azure} textColor="#fff">{e.provenance}: {e.provenanceTitle}</Badge>}
                       <div style={{ fontSize: 13 }}>{e.text}</div>
                       <div style={{ marginTop: 6 }}><Button variant="danger" onClick={() => remove(e.id)}>Remove</Button></div>
                     </Card>
@@ -901,7 +1280,7 @@ function Citations({ citations, saveCitations }) {
   };
   const removeCitation = (id) => { if (window.confirm('Delete this citation permanently?')) saveCitations(citations.filter(c => c.id !== id)); };
   const filtered = citations.filter(c => !search.trim() || [c.author, c.title, c.claim, c.source].join(' ').toLowerCase().includes(search.toLowerCase()));
-  const copyCitation = (c) => navigator.clipboard?.writeText(`${c.author} (${c.year}). ${c.title}. ${c.source}.`);
+  const copyCitation = (c) => navigator.clipboard?.writeText(`${c.author}${c.year ? ` (${c.year})` : ''}. ${c.title}. ${c.source}.`);
 
   return (
     <div>
@@ -926,7 +1305,8 @@ function Citations({ citations, saveCitations }) {
         {filtered.map(c => (
           <Card key={c.id}>
             <Badge color={COLORS.lavender}>{c.evidenceType}</Badge>
-            <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>{c.author} ({c.year})</div>
+            {c.provenance && <Badge color={COLORS.azure} textColor="#fff">{c.provenance}: {c.provenanceTitle}</Badge>}
+            <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>{c.author}{c.year ? ` (${c.year})` : ''}</div>
             <div style={{ fontSize: 13 }}>{c.title}</div>
             <div style={{ fontSize: 12, color: COLORS.sage }}>{c.source}</div>
             {c.claim && <div style={{ fontSize: 12, marginTop: 4, color: COLORS.ink }}>Supports: {c.claim}</div>}
@@ -1003,7 +1383,7 @@ function Questions({ questions, saveQuestions }) {
 
 // ---------------- APP ----------------
 
-function GlobalSearch({ notes, library, citations, questions, setTab }) {
+function GlobalSearch({ notes, library, citations, questions, mediaJournal, synthesisLog, setTab }) {
   const [q, setQ] = useState('');
   const results = useMemo(() => {
     if (!q.trim()) return [];
@@ -1013,8 +1393,10 @@ function GlobalSearch({ notes, library, citations, questions, setTab }) {
     library.forEach(l => { if ((l.title + l.author + l.tags + l.reflection).toLowerCase().includes(term)) out.push({ type: 'Library', label: l.title, tab: 'library' }); });
     citations.forEach(c => { if ((c.title + c.author + c.claim).toLowerCase().includes(term)) out.push({ type: 'Citation', label: `${c.author} — ${c.title}`, tab: 'citations' }); });
     questions.forEach(qu => { if ((qu.question + qu.answer).toLowerCase().includes(term)) out.push({ type: 'Question', label: qu.question, tab: 'questions' }); });
+    mediaJournal.forEach(m => { if ((m.title + m.creator + m.summary + m.critique).toLowerCase().includes(term)) out.push({ type: 'Media journal', label: m.title, tab: 'media' }); });
+    synthesisLog.forEach(s => { if ((s.headline + (s.insights || []).join(' ')).toLowerCase().includes(term)) out.push({ type: 'Synthesis', label: s.headline, tab: 'synthesis' }); });
     return out.slice(0, 8);
-  }, [q, notes, library, citations, questions]);
+  }, [q, notes, library, citations, questions, mediaJournal, synthesisLog]);
 
   return (
     <div style={{ marginBottom: 20, position: 'relative' }}>
@@ -1048,10 +1430,14 @@ export default function StudyHub() {
   const [framework, saveFramework] = useStore('rr-phd-framework', { entries: [] });
   const [challengeLog, saveChallengeLog] = useStore('rr-phd-challenges', []);
   const [cases, saveCases] = useStore('rr-phd-cases', []);
+  const [mediaJournal, saveMediaJournal] = useStore('rr-phd-media-journal', []);
+  const [synthesisLog, saveSynthesisLog] = useStore('rr-phd-synthesis', []);
+  const [bridge, saveBridge] = useStore('rr-phd-library-bridge', { siteUrl: 'https://root-restore-library-tracker.netlify.app', libraryKey: '', importedIds: [] });
 
   return (
     <div style={{ fontFamily: BODY_FONT, background: COLORS.cream, minHeight: '100vh', padding: '24px 16px' }}>
       <style>{FONT_IMPORT}</style>
+      <style>{PRINT_STYLE}</style>
       <div style={{ maxWidth: 780, margin: '0 auto', textAlign: 'center' }}>
         <div style={{ fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', color: COLORS.sage, fontWeight: 700 }}>Tulsi &amp; Grace</div>
         <h1 style={{ margin: '4px 0 20px', fontFamily: DISPLAY_FONT, fontSize: 28, fontWeight: 700, color: COLORS.ink }}>Formation Study Hub</h1>
@@ -1066,15 +1452,41 @@ export default function StudyHub() {
           ))}
         </div>
 
-        <GlobalSearch notes={notes} library={library} citations={citations} questions={questions} setTab={setActiveTab} />
+        <GlobalSearch notes={notes} library={library} citations={citations} questions={questions} mediaJournal={mediaJournal} synthesisLog={synthesisLog} setTab={setActiveTab} />
 
         {!thesisLoaded ? <p style={{ fontSize: 13, color: COLORS.sage }}>Loading your hub...</p> : (
           <div style={{ textAlign: 'center' }}>
-            {activeTab === 'dashboard' && <Dashboard thesis={thesis} tasks={tasks} questions={questions} checkpoints={checkpoints} cases={cases} setTab={setActiveTab} />}
+            {activeTab === 'dashboard' && <Dashboard thesis={thesis} tasks={tasks} questions={questions} checkpoints={checkpoints} cases={cases} mediaJournal={mediaJournal} synthesisLog={synthesisLog} setTab={setActiveTab} />}
             {activeTab === 'syllabus' && <Syllabus tasks={tasks} saveTasks={saveTasks} />}
             {activeTab === 'checkpoints' && <Checkpoints checkpoints={checkpoints} saveCheckpoints={saveCheckpoints} tasks={tasks} />}
             {activeTab === 'thesis' && <Thesis thesis={thesis} saveThesis={saveThesis} />}
             {activeTab === 'cases' && <CaseLog cases={cases} saveCases={saveCases} />}
+            {activeTab === 'media' && <DissertationMedia
+              entries={mediaJournal} saveEntries={saveMediaJournal}
+              bridge={bridge} saveBridge={saveBridge}
+              onPromoteCitation={(entry) => {
+                saveCitations([{
+                  id: Date.now(), author: entry.creator, year: '', title: entry.title,
+                  source: entry.mediaType, claim: entry.summary, evidenceType: entry.evidenceType,
+                  provenance: 'Media journal', provenanceTitle: entry.title,
+                }, ...citations]);
+                alert('Sent to citation bank.');
+              }}
+              onPromoteFrameworkGap={(entry) => {
+                const letter = (entry.graceLetters && entry.graceLetters[0]) || 'Gather';
+                saveFramework({
+                  ...framework,
+                  entries: [{
+                    id: Date.now(), letter, field: 'gap',
+                    text: `From "${entry.title}" (${entry.stance}): ${entry.critique || entry.summary}`,
+                    date: new Date().toLocaleDateString(),
+                    provenance: 'Media journal', provenanceTitle: entry.title,
+                  }, ...(framework.entries || [])],
+                });
+                alert('Sent to framework builder as a gap.');
+              }}
+            />}
+            {activeTab === 'synthesis' && <WeeklySynthesis synthesisLog={synthesisLog} saveSynthesisLog={saveSynthesisLog} />}
             {activeTab === 'framework' && <FrameworkBuilder framework={framework} saveFramework={saveFramework} />}
             {activeTab === 'challenge' && <ChallengeMe log={challengeLog} saveLog={saveChallengeLog} thesis={thesis} framework={framework} />}
             {activeTab === 'notes' && <Notes notes={notes} saveNotes={saveNotes} />}
