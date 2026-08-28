@@ -26,6 +26,9 @@ const SUB_QUESTIONS = [
   'SQ2 — Ancestral: what has traditional/ancestral practice historically offered?',
   'SQ3 — Evidence base: what does current clinical evidence say?',
   'SQ4 — Clinical application: what actually happens with real clients?',
+  'SQ5 — Health equity: what does racialized chronic stress (weathering) mean for assessment and treatment?',
+  'SQ6 — Generational-trauma framework: how does this function clinically, distinct from a biological-transmission claim?',
+  'SQ7 — Epistemic boundary: what can/cannot honestly be claimed, and how does the protocol stay honest about that line?',
 ];
 
 const TABS = [
