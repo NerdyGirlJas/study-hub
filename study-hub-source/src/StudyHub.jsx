@@ -35,6 +35,8 @@ const TABS = [
   { id: 'thesis', label: 'Thesis workspace' },
   { id: 'cases', label: 'Case log' },
   { id: 'media', label: 'Dissertation media journal' },
+  { id: 'tbr', label: 'Living TBR' },
+  { id: 'recommendations', label: 'Recommendations' },
   { id: 'synthesis', label: 'Weekly synthesis' },
   { id: 'framework', label: 'Framework builder' },
   { id: 'challenge', label: 'Challenge me' },
@@ -230,10 +232,10 @@ function Collapsible({ title, defaultOpen = true, children, badge }) {
   );
 }
 
-function Button({ children, onClick, variant = 'primary', style, type = 'button' }) {
+function Button({ children, onClick, variant = 'primary', style, type = 'button', disabled = false }) {
   const base = {
     border: 'none', borderRadius: 999, padding: '8px 16px', fontSize: 13, fontWeight: 600,
-    cursor: 'pointer', fontFamily: BODY_FONT,
+    cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: BODY_FONT, opacity: disabled ? 0.6 : 1,
   };
   const variants = {
     primary: { background: COLORS.sage, color: '#fff' },
@@ -241,7 +243,7 @@ function Button({ children, onClick, variant = 'primary', style, type = 'button'
     outline: { background: 'transparent', color: COLORS.azure, border: `1px solid ${COLORS.azure}` },
     danger: { background: '#fff', color: '#a0524a', border: '1px solid #e3b3b3' },
   };
-  return <button type={type} onClick={onClick} style={{ ...base, ...variants[variant], ...style }}>{children}</button>;
+  return <button type={type} onClick={onClick} disabled={disabled} style={{ ...base, ...variants[variant], ...style }}>{children}</button>;
 }
 
 function TextInput(props) {
@@ -734,7 +736,7 @@ function LibraryBridgeImport({ bridge, saveBridge, onDraftFromImport }) {
         </>}
         <div style={{ display: 'flex', gap: 8 }}>
           <TextInput placeholder="Your Library Tracker key" value={libraryKey} onChange={e => setLibraryKey(e.target.value)} style={{ flex: 1 }} />
-          <Button onClick={fetchPending} style={{ opacity: loading ? 0.6 : 1 }}>{loading ? 'Checking...' : 'Check for handoffs'}</Button>
+          <Button onClick={fetchPending} disabled={loading}>{loading ? 'Checking...' : 'Check for handoffs'}</Button>
         </div>
         <button onClick={() => setExpanded(x => !x)} style={{ border: 'none', background: 'none', color: COLORS.sage, fontSize: 11, textDecoration: 'underline', cursor: 'pointer', marginTop: 6, padding: 0 }}>
           {expanded ? 'Hide site URL setting' : 'Using a different site URL?'}
@@ -755,9 +757,18 @@ function LibraryBridgeImport({ bridge, saveBridge, onDraftFromImport }) {
   );
 }
 
-function DissertationMedia({ entries, saveEntries, onPromoteCitation, onPromoteFrameworkGap, bridge, saveBridge }) {
+function DissertationMedia({ entries, saveEntries, onPromoteCitation, onPromoteFrameworkGap, bridge, saveBridge, draftSeed, onConsumeDraftSeed }) {
   const [form, setForm] = useState(EMPTY_MEDIA);
   const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (draftSeed) {
+      setForm({ ...EMPTY_MEDIA, title: draftSeed.title, creator: draftSeed.creator || '' });
+      setExpanded(true);
+      onConsumeDraftSeed();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftSeed]);
 
   const toggleMulti = (field, value) => {
     setForm(f => {
@@ -910,6 +921,243 @@ function SynthesisSlide({ format, headline, insights, application, weekLabel, sl
   );
 }
 
+// ---------------- LIVING TBR ----------------
+
+const TBR_RELEVANCE = ['Y', 'Maybe', 'N'];
+const EMPTY_TBR = { title: '', author: '', subject: '', owned: false, relevance: 'Maybe', howSupports: '', priority: 3 };
+
+function LivingTBR({ items, saveItems, onPromoteToMedia }) {
+  const [form, setForm] = useState(EMPTY_TBR);
+  const [expanded, setExpanded] = useState(false);
+  const [filterOwned, setFilterOwned] = useState('All');
+  const [filterRelevance, setFilterRelevance] = useState('All');
+  const [filterSubject, setFilterSubject] = useState('All');
+
+  const allSubjects = useMemo(() => {
+    const set = new Set();
+    items.forEach(i => (i.subject || '').split(',').map(s => s.trim()).filter(Boolean).forEach(s => set.add(s)));
+    return Array.from(set).sort();
+  }, [items]);
+
+  const addItem = () => {
+    if (!form.title.trim()) return;
+    saveItems([{ ...form, id: Date.now() }, ...items]);
+    setForm(EMPTY_TBR);
+    setExpanded(false);
+  };
+  const removeItem = (id) => { if (window.confirm('Remove this from your TBR permanently?')) saveItems(items.filter(i => i.id !== id)); };
+  const toggleOwned = (id) => saveItems(items.map(i => i.id === id ? { ...i, owned: !i.owned } : i));
+
+  const filtered = items.filter(i => {
+    const ownedMatch = filterOwned === 'All' || (filterOwned === 'Owned' ? i.owned : !i.owned);
+    const relMatch = filterRelevance === 'All' || i.relevance === filterRelevance;
+    const subjMatch = filterSubject === 'All' || (i.subject || '').split(',').map(s => s.trim()).includes(filterSubject);
+    return ownedMatch && relMatch && subjMatch;
+  });
+
+  const grouped = useMemo(() => {
+    const map = {};
+    filtered.forEach(i => {
+      const subjects = (i.subject || 'Unsorted').split(',').map(s => s.trim()).filter(Boolean);
+      const keys = subjects.length ? subjects : ['Unsorted'];
+      keys.forEach(k => { if (!map[k]) map[k] = []; map[k].push(i); });
+    });
+    return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [filtered]);
+
+  return (
+    <div>
+      <Section title="Living TBR">
+        <Card>
+          <p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>
+            Every book worth reading, grouped by subject — whether you own it yet, and whether it actually
+            supports the dissertation. Filter down when it gets long.
+          </p>
+        </Card>
+      </Section>
+      <Section title={expanded ? 'New TBR entry' : 'Add to TBR'} right={
+        <Button variant="outline" onClick={() => setExpanded(e => !e)}>{expanded ? 'Collapse' : 'Expand form'}</Button>
+      }>
+        <Card style={{ textAlign: 'left' }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <TextInput placeholder="Title" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={{ flex: 2 }} />
+            <TextInput placeholder="Author" value={form.author} onChange={e => setForm({ ...form, author: e.target.value })} style={{ flex: 1 }} />
+          </div>
+          <TextInput placeholder="Subject tags, comma separated" value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} style={{ marginBottom: 8 }} />
+          {expanded && <>
+            <div style={{ display: 'flex', gap: 12, marginBottom: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: COLORS.sage }}>
+                <input type="checkbox" checked={form.owned} onChange={e => setForm({ ...form, owned: e.target.checked })} /> Already own it
+              </label>
+              <Select value={form.relevance} onChange={e => setForm({ ...form, relevance: e.target.value })}>
+                {TBR_RELEVANCE.map(r => <option key={r} value={r}>Dissertation relevance: {r}</option>)}
+              </Select>
+              <Select value={form.priority} onChange={e => setForm({ ...form, priority: Number(e.target.value) })}>
+                {[5,4,3,2,1].map(p => <option key={p} value={p}>Priority {p}</option>)}
+              </Select>
+            </div>
+            <TextArea placeholder="How it supports the dissertation (optional)" value={form.howSupports} onChange={e => setForm({ ...form, howSupports: e.target.value })} style={{ marginBottom: 8 }} />
+          </>}
+          <Button onClick={addItem}>Add to TBR</Button>
+        </Card>
+      </Section>
+      <Section title="Filter">
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <Select value={filterOwned} onChange={e => setFilterOwned(e.target.value)}>
+            <option value="All">Owned: All</option><option value="Owned">Owned</option><option value="Not owned">Not owned</option>
+          </Select>
+          <Select value={filterRelevance} onChange={e => setFilterRelevance(e.target.value)}>
+            <option value="All">Relevance: All</option>{TBR_RELEVANCE.map(r => <option key={r} value={r}>{r}</option>)}
+          </Select>
+          <Select value={filterSubject} onChange={e => setFilterSubject(e.target.value)}>
+            <option value="All">Subject: All</option>{allSubjects.map(s => <option key={s} value={s}>{s}</option>)}
+          </Select>
+        </div>
+      </Section>
+      {grouped.map(([subject, books]) => (
+        <Collapsible key={subject} title={subject} badge={books.length} defaultOpen={false}>
+          {books.map(b => (
+            <Card key={b.id} style={{ textAlign: 'left' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{b.title}</div>
+                  {b.author && <div style={{ fontSize: 12, color: COLORS.sage }}>{b.author}</div>}
+                </div>
+                <Badge color={b.owned ? COLORS.lavenderLight : COLORS.lavender}>{b.owned ? 'Owned' : 'Not owned'}</Badge>
+              </div>
+              <div style={{ marginTop: 6 }}>
+                <Badge color={b.relevance === 'Y' ? COLORS.sage : b.relevance === 'Maybe' ? COLORS.lavenderLight : '#e8e8e8'} textColor={b.relevance === 'Y' ? '#fff' : COLORS.ink}>
+                  Relevance: {b.relevance}
+                </Badge>
+                <Badge>Priority {b.priority}</Badge>
+              </div>
+              {b.howSupports && <p style={{ fontSize: 13, marginTop: 6, color: COLORS.ink }}>{b.howSupports}</p>}
+              <div style={{ display: 'flex', gap: 6, marginTop: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                <Button variant="secondary" onClick={() => toggleOwned(b.id)}>{b.owned ? 'Mark not owned' : 'Mark owned'}</Button>
+                {b.relevance !== 'N' && <Button variant="secondary" onClick={() => onPromoteToMedia(b)}>Start dissertation critique</Button>}
+                <Button variant="danger" onClick={() => removeItem(b.id)}>Remove</Button>
+              </div>
+            </Card>
+          ))}
+        </Collapsible>
+      ))}
+      {filtered.length === 0 && <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>Nothing matches this filter yet.</p></Card>}
+    </div>
+  );
+}
+
+// ---------------- DISSERTATION RECOMMENDATIONS ----------------
+
+function DissertationRecommendations({ thesis, framework, mediaJournal, tbr, onAddToTbr }) {
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [addedTitles, setAddedTitles] = useState([]);
+
+  const fetchRecommendations = async () => {
+    if (!thesis.statement) { setError('Write your dissertation statement first, in Thesis Workspace.'); return; }
+    setLoading(true); setError('');
+    try {
+      const gaps = (framework.entries || []).filter(e => e.field === 'gap').map(e => `[${e.letter}] ${e.text}`);
+      const strengths = (framework.entries || []).filter(e => e.field === 'strength').map(e => `[${e.letter}] ${e.text}`);
+      const highRelevanceTitles = [
+        ...tbr.filter(t => t.relevance === 'Y').map(t => t.title),
+        ...mediaJournal.map(m => m.title),
+      ];
+      const contradictingMedia = mediaJournal.filter(m => m.stance === 'Contradicts' || m.stance === 'Complicates').map(m => `${m.title}: ${m.critique || m.summary}`);
+
+      const res = await fetch('/.netlify/functions/dissertation-recommendations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thesisStatement: thesis.statement, gaps, strengths, highRelevanceTitles, contradictingMedia }),
+      });
+      const json = await res.json();
+      if (json.error === 'missing_api_key') { setError('GROQ_API_KEY is not set on this Netlify site yet.'); return; }
+      if (json.error) { setError('Could not generate recommendations right now — try again in a moment.'); return; }
+      setResult(json);
+    } catch (e) {
+      setError('Could not reach the recommendations engine.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addBookToTbr = (book) => {
+    onAddToTbr({
+      title: book.title, author: book.creator, subject: '', owned: false,
+      relevance: 'Maybe', howSupports: book.why, priority: 3,
+    });
+    setAddedTitles(prev => [...prev, book.title]);
+  };
+
+  return (
+    <div>
+      <Section title="Dissertation recommendations">
+        <Card>
+          <p style={{ margin: '0 0 6px', fontSize: 13, color: COLORS.sage }}>
+            Books and media are real, nameable works — check them before assuming, but they're safe to browse.
+          </p>
+          <p style={{ margin: 0, fontSize: 13, color: COLORS.azure, fontWeight: 600 }}>
+            Research directions are deliberately NOT named studies — an AI asked to name specific papers will
+            confidently invent ones that don't exist. You'll get topics to search yourself, never fabricated citations.
+          </p>
+        </Card>
+      </Section>
+      <Section title="Get suggestions based on your current thesis and framework gaps">
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+          <Button onClick={fetchRecommendations} disabled={loading}>
+            {loading ? 'Thinking...' : 'Get recommendations'}
+          </Button>
+        </div>
+        {error && <Card><p style={{ margin: 0, fontSize: 13, color: '#a0524a' }}>{error}</p></Card>}
+      </Section>
+
+      {result && (
+        <>
+          <Section title="Books & media">
+            {result.booksAndMedia.length === 0 && <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>No suggestions this time — try again.</p></Card>}
+            {result.booksAndMedia.map((b, i) => (
+              <Card key={i} style={{ textAlign: 'left' }}>
+                <Badge>{b.type}</Badge>
+                <div style={{ fontWeight: 600, fontSize: 13, marginTop: 4 }}>{b.title}</div>
+                {b.creator && <div style={{ fontSize: 12, color: COLORS.sage }}>{b.creator}</div>}
+                {b.why && <p style={{ fontSize: 13, marginTop: 6 }}>{b.why}</p>}
+                <div style={{ marginTop: 8 }}>
+                  <Button
+                    variant={addedTitles.includes(b.title) ? 'secondary' : 'primary'}
+                    onClick={() => addBookToTbr(b)}
+                    style={{ opacity: addedTitles.includes(b.title) ? 0.6 : 1 }}
+                  >
+                    {addedTitles.includes(b.title) ? 'Added to TBR ✓' : 'Add to Living TBR'}
+                  </Button>
+                </div>
+              </Card>
+            ))}
+          </Section>
+          <Section title="Research directions to search yourself">
+            {result.researchDirections.length === 0 && <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>No directions this time — try again.</p></Card>}
+            {result.researchDirections.map((r, i) => (
+              <Card key={i} style={{ textAlign: 'left' }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{r.topic}</div>
+                {r.why && <p style={{ fontSize: 13, marginTop: 6, color: COLORS.sage }}>{r.why}</p>}
+                <div style={{ marginTop: 8 }}>
+                  <a
+                    href={`https://scholar.google.com/scholar?q=${encodeURIComponent(r.topic)}`}
+                    target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize: 12, color: COLORS.azure, textDecoration: 'underline' }}
+                  >
+                    Search this on Google Scholar →
+                  </a>
+                </div>
+              </Card>
+            ))}
+          </Section>
+        </>
+      )}
+    </div>
+  );
+}
+
 function WeeklySynthesis({ synthesisLog, saveSynthesisLog }) {
   const [headline, setHeadline] = useState('');
   const [insightsRaw, setInsightsRaw] = useState('');
@@ -999,7 +1247,7 @@ function WeeklySynthesis({ synthesisLog, saveSynthesisLog }) {
           ))}
         </div>
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
-          <Button onClick={doExport} style={{ opacity: exporting ? 0.6 : 1 }}>
+          <Button onClick={doExport} disabled={exporting}>
             {exporting ? 'Exporting...' : formatId === 'printable' ? 'Print / save as PDF' : 'Download image'}
           </Button>
         </div>
@@ -1173,7 +1421,7 @@ function ChallengeMe({ log, saveLog, thesis, framework }) {
               <input type="checkbox" checked={useContext} onChange={e => setUseContext(e.target.checked)} />
               Include my dissertation statement and known framework gaps as context
             </label>
-            <Button onClick={run} style={{ opacity: loading ? 0.6 : 1 }}>{loading ? 'Thinking...' : 'Challenge this'}</Button>
+            <Button onClick={run} disabled={loading}>{loading ? 'Thinking...' : 'Challenge this'}</Button>
             {error && <p style={{ fontSize: 12, color: '#a0524a', margin: 0 }}>{error}</p>}
           </div>
         </Card>
@@ -1427,7 +1675,7 @@ function Questions({ questions, saveQuestions }) {
 
 // ---------------- APP ----------------
 
-function GlobalSearch({ notes, library, citations, questions, mediaJournal, synthesisLog, setTab }) {
+function GlobalSearch({ notes, library, citations, questions, mediaJournal, synthesisLog, tbr, setTab }) {
   const [q, setQ] = useState('');
   const results = useMemo(() => {
     if (!q.trim()) return [];
@@ -1439,8 +1687,9 @@ function GlobalSearch({ notes, library, citations, questions, mediaJournal, synt
     questions.forEach(qu => { if ((qu.question + qu.answer).toLowerCase().includes(term)) out.push({ type: 'Question', label: qu.question, tab: 'questions' }); });
     mediaJournal.forEach(m => { if ((m.title + m.creator + m.summary + m.critique).toLowerCase().includes(term)) out.push({ type: 'Media journal', label: m.title, tab: 'media' }); });
     synthesisLog.forEach(s => { if ((s.headline + (s.insights || []).join(' ')).toLowerCase().includes(term)) out.push({ type: 'Synthesis', label: s.headline, tab: 'synthesis' }); });
+    tbr.forEach(t => { if ((t.title + t.author + t.subject).toLowerCase().includes(term)) out.push({ type: 'TBR', label: t.title, tab: 'tbr' }); });
     return out.slice(0, 8);
-  }, [q, notes, library, citations, questions, mediaJournal, synthesisLog]);
+  }, [q, notes, library, citations, questions, mediaJournal, synthesisLog, tbr]);
 
   return (
     <div style={{ marginBottom: 20, position: 'relative' }}>
@@ -1475,6 +1724,8 @@ function StudyHubContent({ syncPanelProps }) {
   const [challengeLog, saveChallengeLog] = useStore('rr-phd-challenges', []);
   const [cases, saveCases] = useStore('rr-phd-cases', []);
   const [mediaJournal, saveMediaJournal] = useStore('rr-phd-media-journal', []);
+  const [tbr, saveTbr] = useStore('rr-phd-tbr', []);
+  const [mediaDraftSeed, setMediaDraftSeed] = useState(null);
   const [synthesisLog, saveSynthesisLog] = useStore('rr-phd-synthesis', []);
   const [bridge, saveBridge] = useStore('rr-phd-library-bridge', { siteUrl: 'https://root-restore-library-tracker.netlify.app', libraryKey: '', importedIds: [] });
 
@@ -1484,7 +1735,17 @@ function StudyHubContent({ syncPanelProps }) {
       <style>{PRINT_STYLE}</style>
       <div style={{ maxWidth: 780, margin: '0 auto', textAlign: 'center' }}>
         <div style={{ fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', color: COLORS.sage, fontWeight: 700 }}>Tulsi &amp; Grace</div>
-        <h1 style={{ margin: '4px 0 20px', fontFamily: DISPLAY_FONT, fontSize: 28, fontWeight: 700, color: COLORS.ink }}>Formation Study Hub</h1>
+        <h1 style={{ margin: '4px 0 4px', fontFamily: DISPLAY_FONT, fontSize: 28, fontWeight: 700, color: COLORS.ink }}>Formation Study Hub</h1>
+        <button onClick={() => setActiveTab('dashboard')} style={{
+          border: 'none', background: 'none', cursor: 'pointer', fontSize: 11, color: COLORS.sage,
+          margin: '0 0 16px', fontFamily: BODY_FONT, display: 'inline-flex', alignItems: 'center', gap: 5,
+        }}>
+          <span style={{
+            width: 7, height: 7, borderRadius: '50%', display: 'inline-block',
+            background: !syncPanelProps.syncKey ? COLORS.lavender : syncPanelProps.syncStatus === 'error' ? '#c07a6e' : syncPanelProps.syncStatus === 'saving' ? '#d9b45e' : '#7a9e7e',
+          }} />
+          {!syncPanelProps.syncKey ? 'Not syncing — this device only' : syncPanelProps.syncStatus === 'error' ? 'Sync error' : syncPanelProps.syncStatus === 'saving' ? 'Syncing...' : syncPanelProps.lastSyncedAt ? `Synced ${syncPanelProps.lastSyncedAt}` : 'Sync ready'}
+        </button>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center', marginBottom: 26, borderBottom: `1px solid ${COLORS.lavenderLight}`, paddingBottom: 14 }}>
           {TABS.map(t => (
@@ -1496,7 +1757,7 @@ function StudyHubContent({ syncPanelProps }) {
           ))}
         </div>
 
-        <GlobalSearch notes={notes} library={library} citations={citations} questions={questions} mediaJournal={mediaJournal} synthesisLog={synthesisLog} setTab={setActiveTab} />
+        <GlobalSearch notes={notes} library={library} citations={citations} questions={questions} mediaJournal={mediaJournal} synthesisLog={synthesisLog} tbr={tbr} setTab={setActiveTab} />
 
         {!thesisLoaded ? <p style={{ fontSize: 13, color: COLORS.sage }}>Loading your hub...</p> : (
           <div style={{ textAlign: 'center' }}>
@@ -1505,9 +1766,17 @@ function StudyHubContent({ syncPanelProps }) {
             {activeTab === 'checkpoints' && <Checkpoints checkpoints={checkpoints} saveCheckpoints={saveCheckpoints} tasks={tasks} />}
             {activeTab === 'thesis' && <Thesis thesis={thesis} saveThesis={saveThesis} />}
             {activeTab === 'cases' && <CaseLog cases={cases} saveCases={saveCases} />}
+            {activeTab === 'tbr' && <LivingTBR
+              items={tbr} saveItems={saveTbr}
+              onPromoteToMedia={(book) => {
+                setMediaDraftSeed({ title: book.title, creator: book.author || '' });
+                setActiveTab('media');
+              }}
+            />}
             {activeTab === 'media' && <DissertationMedia
               entries={mediaJournal} saveEntries={saveMediaJournal}
               bridge={bridge} saveBridge={saveBridge}
+              draftSeed={mediaDraftSeed} onConsumeDraftSeed={() => setMediaDraftSeed(null)}
               onPromoteCitation={(entry) => {
                 saveCitations([{
                   id: Date.now(), author: entry.creator, year: '', title: entry.title,
@@ -1529,6 +1798,10 @@ function StudyHubContent({ syncPanelProps }) {
                 });
                 alert('Sent to framework builder as a gap.');
               }}
+            />}
+            {activeTab === 'recommendations' && <DissertationRecommendations
+              thesis={thesis} framework={framework} mediaJournal={mediaJournal} tbr={tbr}
+              onAddToTbr={(item) => saveTbr([{ ...item, id: Date.now() }, ...tbr])}
             />}
             {activeTab === 'synthesis' && <WeeklySynthesis synthesisLog={synthesisLog} saveSynthesisLog={saveSynthesisLog} />}
             {activeTab === 'framework' && <FrameworkBuilder framework={framework} saveFramework={saveFramework} />}
@@ -1617,10 +1890,35 @@ export default function StudyHub() {
   const joinSync = async (inputKey) => {
     const trimmed = inputKey.trim();
     if (!trimmed) return;
+    // Joining overwrites this device's local data with whatever's on the key
+    // (or, if the key is empty/new, leaves this device's data in place to be
+    // pushed up next cycle — either way, this device's current data is about
+    // to be superseded one way or the other). Warn before touching anything
+    // if this device actually has data that would be affected.
+    const hasLocalData = Object.keys(getAllHubData()).length > 0;
+    if (hasLocalData) {
+      const proceed = window.confirm(
+        'This device already has data in it. Joining will replace everything on this device with the cloud copy under that key ' +
+        '(or, if that key has no data yet, this device\'s own data will be pushed up to it instead). ' +
+        'Use "Export all data" on the dashboard first if you want a backup. Continue joining?'
+      );
+      if (!proceed) return;
+    }
     try {
       const res = await fetch(`${SYNC_URL}?key=${encodeURIComponent(trimmed)}`);
       const json = await res.json();
-      if (json.data) restoreAllHubData(json.data);
+      if (json.data) {
+        restoreAllHubData(json.data);
+      } else if (hasLocalData) {
+        // Key has no cloud data yet — this device's existing data will become
+        // the seed for that key once the push loop runs. Make that explicit
+        // rather than letting it happen silently after the reload.
+        const stillProceed = window.confirm(
+          'No data was found yet for that key — it may be brand new, or the key may be mistyped. ' +
+          'If you continue, this device\'s current data will become the starting point for that key. Continue?'
+        );
+        if (!stillProceed) return;
+      }
       localStorage.setItem(SYNC_KEY_STORAGE, trimmed);
       // a fresh load is the simplest correct way to get every already-mounted
       // useStore hook to pick up the just-restored data — same pattern the

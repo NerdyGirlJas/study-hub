@@ -19,7 +19,7 @@ export async function handler(event) {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'openai/gpt-oss-120b', // llama-3.3-70b-versatile was shut down by Groq on 2026-08-16
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 1000,
       }),
