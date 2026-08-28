@@ -1,0 +1,1089 @@
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+
+const COLORS = {
+  cream: '#f0ece0',
+  lavenderLight: '#e8d7e6',
+  sage: '#8d7e97',
+  azure: '#006a7f',
+  lavender: '#bdb3c8',
+  ink: '#2f2b26',
+  white: '#ffffff',
+};
+const DISPLAY_FONT = "'Fraunces', 'Playfair Display', serif";
+const BODY_FONT = "'Josefin Sans', sans-serif";
+const DATA_FONT = "'IBM Plex Mono', monospace";
+const FONT_IMPORT = "@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Josefin+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap');";
+
+const GRACE_LETTERS = ['Gather', 'Reckon', 'Address', 'Cultivate', 'Enrich'];
+
+const TABS = [
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'syllabus', label: 'Syllabus & calendar' },
+  { id: 'checkpoints', label: 'Checkpoints' },
+  { id: 'thesis', label: 'Thesis workspace' },
+  { id: 'cases', label: 'Case log' },
+  { id: 'framework', label: 'Framework builder' },
+  { id: 'challenge', label: 'Challenge me' },
+  { id: 'notes', label: 'Study notes' },
+  { id: 'library', label: 'Library' },
+  { id: 'citations', label: 'Citation bank' },
+  { id: 'questions', label: 'Questions & answers' },
+];
+
+// ---------------- SEED DATA ----------------
+
+const SEED_SYLLABUS = [
+  // Q1
+  { title: 'Hoffmann Ch. 1–2: Introduction + Plant Chemistry basics', quarter: 'Q1', source: 'Hoffmann', hours: 6, status: 'planned' },
+  { title: 'Hoffmann Ch. 3–5: Phytochemistry foundations', quarter: 'Q1', source: 'Hoffmann', hours: 10, status: 'planned' },
+  { title: 'Hoffmann Ch. 6–8: Phytochemistry, most intensive month', quarter: 'Q1', source: 'Hoffmann', hours: 14, status: 'planned' },
+  { title: 'Ganora Phases 1–4', quarter: 'Q1', source: 'Ganora', hours: 20, status: 'planned' },
+  { title: 'CWH Family Herbalist — program orientation', quarter: 'Q1', source: 'CWH', hours: 8, status: 'planned' },
+  { title: 'Draft dissertation sub-questions 1 & 2', quarter: 'Q1', source: 'Dissertation', hours: 4, status: 'planned' },
+  // Q2
+  { title: 'Hoffmann Ch. 9–10: Pharmacology + Toxicity, build Safety Flag Page', quarter: 'Q2', source: 'Hoffmann', hours: 10, status: 'planned' },
+  { title: 'Hoffmann Ch. 11–12: Formulation + Holistic Model', quarter: 'Q2', source: 'Hoffmann', hours: 10, status: 'planned' },
+  { title: 'Hoffmann Ch. 13: Digestive System', quarter: 'Q2', source: 'Hoffmann', hours: 8, status: 'planned' },
+  { title: 'CWH Digestive Health module', quarter: 'Q2', source: 'CWH', hours: 18, status: 'planned' },
+  { title: 'First client case write-ups (new protocol)', quarter: 'Q2', source: 'Clinical', hours: 6, status: 'planned' },
+  // Q3
+  { title: 'Hoffmann Ch. 14: Cardiovascular System', quarter: 'Q3', source: 'Hoffmann', hours: 8, status: 'planned' },
+  { title: 'Hoffmann Ch. 17: Urinary System', quarter: 'Q3', source: 'Hoffmann', hours: 8, status: 'planned' },
+  { title: 'Hoffmann Ch. 15: Respiratory System', quarter: 'Q3', source: 'Hoffmann', hours: 8, status: 'planned' },
+  { title: 'CWH corresponding body-system modules', quarter: 'Q3', source: 'CWH', hours: 24, status: 'planned' },
+  { title: 'Literature Review Protocol applied to Q3 herb claims', quarter: 'Q3', source: 'Dissertation', hours: 6, status: 'planned' },
+  // Q4
+  { title: 'Hoffmann Ch. 21: Immune System', quarter: 'Q4', source: 'Hoffmann', hours: 8, status: 'planned' },
+  { title: 'Hoffmann Ch. 16: Nervous System (2 months)', quarter: 'Q4', source: 'Hoffmann', hours: 16, status: 'planned' },
+  { title: 'CWH Immune + Neurological/Emotional Health', quarter: 'Q4', source: 'CWH', hours: 24, status: 'planned' },
+  { title: 'Self-Administered Comprehensive Exam #1', quarter: 'Q4', source: 'Dissertation', hours: 4, status: 'planned' },
+  { title: 'Year One Annual Checkpoint', quarter: 'Q4', source: 'Dissertation', hours: 4, status: 'planned' },
+  // Q5
+  { title: 'Hoffmann Ch. 20: Skin', quarter: 'Q5', source: 'Hoffmann', hours: 8, status: 'planned' },
+  { title: 'Hoffmann Ch. 19: Musculoskeletal', quarter: 'Q5', source: 'Hoffmann', hours: 8, status: 'planned' },
+  { title: 'Hoffmann Ch. 23: Elderly (reference read)', quarter: 'Q5', source: 'Hoffmann', hours: 4, status: 'planned' },
+  { title: 'Ganora Phases 5–7 complete', quarter: 'Q5', source: 'Ganora', hours: 20, status: 'planned' },
+  { title: 'CWH Integumentary + Musculoskeletal', quarter: 'Q5', source: 'CWH', hours: 20, status: 'planned' },
+  // Q6
+  { title: 'Hoffmann Ch. 18: Reproductive System (spans quarter)', quarter: 'Q6', source: 'Hoffmann', hours: 16, status: 'planned' },
+  { title: 'Hoffmann Ch. 22: Endocrine System', quarter: 'Q6', source: 'Hoffmann', hours: 8, status: 'planned' },
+  { title: 'CWH Reproductive Health (75.5 hrs — its own quarter)', quarter: 'Q6', source: 'CWH', hours: 75.5, status: 'planned' },
+  { title: 'Most clinically dense quarter — treat all cases as primary data', quarter: 'Q6', source: 'Dissertation', hours: 6, status: 'planned' },
+  // Q7
+  { title: 'Hoffmann Ch. 24: Children', quarter: 'Q7', source: 'Hoffmann', hours: 8, status: 'planned' },
+  { title: "CWH Children's Health, studied alongside homeschool", quarter: 'Q7', source: 'CWH', hours: 20, status: 'planned' },
+  { title: 'Family/lineage chapter drafting', quarter: 'Q7', source: 'Dissertation', hours: 6, status: 'planned' },
+  // Q8
+  { title: 'Hoffmann Ch. 25: Herbal Actions — build Actions Glossary', quarter: 'Q8', source: 'Hoffmann', hours: 8, status: 'planned' },
+  { title: 'Hoffmann Ch. 26: Materia Medica — full 150-monograph review', quarter: 'Q8', source: 'Hoffmann', hours: 16, status: 'planned' },
+  { title: 'Self-Administered Comprehensive Exam #2', quarter: 'Q8', source: 'Dissertation', hours: 4, status: 'planned' },
+  { title: 'Capstone Synthesis, written', quarter: 'Q8', source: 'Dissertation', hours: 12, status: 'planned' },
+  { title: 'AHG application compiled and submitted', quarter: 'Q8', source: 'AHG', hours: 6, status: 'planned' },
+];
+
+const SEED_CHECKPOINTS = [
+  { title: 'Year One Annual Checkpoint', quarter: 'Q4', done: false,
+    items: [
+      'Write one-year clinical evolution letter to yourself',
+      'AHG audit: educational hours, clinical hours, client count',
+      'Phytochemistry progress review (Ganora phases complete)',
+      'Content audit: best-performing templates and topics',
+      'Self-Administered Comprehensive Exam #1 completed',
+      'Dissertation sub-question 1 & 2 progress reviewed',
+    ] },
+  { title: 'Self-Administered Comprehensive Exam #1', quarter: 'Q4', done: false,
+    items: [
+      'Pick 3 conditions relevant to your practice',
+      'Write constituents involved, from memory, no notes',
+      'Write pharmacodynamics/mechanism for each',
+      'Write safety and drug interaction profile for each',
+      'Write formulation reasoning for each',
+      'Write expected clinical outcome for each',
+      'Compare to what peer-reviewed evidence actually supports',
+    ] },
+  { title: 'Year Two Annual Checkpoint', quarter: 'Q8', done: false,
+    items: [
+      'Full audit per Master Formation System structure',
+      'Self-Administered Comprehensive Exam #2 completed',
+      'GRACE framework evidence-trail completeness per letter reviewed',
+      'Dissertation sub-question progress finalized',
+    ] },
+  { title: 'Capstone Synthesis', quarter: 'Q8', done: false,
+    items: [
+      'Draft the four sub-question chapters',
+      'Select representative case write-ups (anonymized)',
+      'Write honest accounting of where evidence supported/challenged you',
+      'Write closing statement: what to study next',
+      '15–25 page target reached',
+    ] },
+];
+
+// ---------------- STORAGE HOOK ----------------
+
+// Standalone build: persists to the browser's localStorage (this is a
+// single-user local app with no backend). Data lives in this browser only —
+// use the Export button on the dashboard regularly to back it up.
+const STORAGE_PREFIX = 'rr-study-hub:';
+
+function useStore(key, initialValue) {
+  const fullKey = STORAGE_PREFIX + key;
+  const [value, setValue] = useState(() => {
+    try {
+      const raw = localStorage.getItem(fullKey);
+      return raw ? JSON.parse(raw) : initialValue;
+    } catch (e) {
+      return initialValue;
+    }
+  });
+  const [loaded] = useState(true);
+
+  const save = useCallback((newValue) => {
+    setValue(newValue);
+    try { localStorage.setItem(fullKey, JSON.stringify(newValue)); }
+    catch (e) { console.error('Storage save failed', e); }
+  }, [fullKey]);
+
+  return [value, save, loaded];
+}
+
+function getAllHubData() {
+  const data = {};
+  Object.keys(localStorage).forEach(k => {
+    if (k.startsWith(STORAGE_PREFIX)) {
+      try { data[k.slice(STORAGE_PREFIX.length)] = JSON.parse(localStorage.getItem(k)); }
+      catch (e) { /* skip unreadable key */ }
+    }
+  });
+  return data;
+}
+
+function restoreAllHubData(data) {
+  Object.entries(data).forEach(([k, v]) => {
+    localStorage.setItem(STORAGE_PREFIX + k, JSON.stringify(v));
+  });
+}
+
+// ---------------- SHARED UI ----------------
+
+function SectionHeader({ children, right }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative', marginBottom: 14 }}>
+      <h3 style={{ margin: 0, fontFamily: DISPLAY_FONT, fontSize: 19, fontWeight: 600, color: COLORS.ink, textAlign: 'center' }}>
+        {children}
+      </h3>
+      {right && <div style={{ position: 'absolute', right: 0 }}>{right}</div>}
+    </div>
+  );
+}
+
+function Section({ title, children, right }) {
+  return (
+    <div style={{ marginBottom: 30 }}>
+      <SectionHeader right={right}>{title}</SectionHeader>
+      {children}
+    </div>
+  );
+}
+
+function Card({ children, style }) {
+  return (
+    <div style={{
+      background: COLORS.white, border: `1px solid ${COLORS.lavenderLight}`, borderRadius: 14,
+      padding: '16px 18px', marginBottom: 10, textAlign: 'center', ...style,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function Collapsible({ title, defaultOpen = true, children, badge }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0',
+        fontFamily: DISPLAY_FONT, fontSize: 16, color: COLORS.ink,
+      }}>
+        <span style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s', fontSize: 12, color: COLORS.sage }}>▶</span>
+        {title}
+        {badge != null && (
+          <span style={{ fontSize: 11, fontFamily: DATA_FONT, background: COLORS.lavenderLight, color: COLORS.ink, borderRadius: 999, padding: '1px 8px' }}>{badge}</span>
+        )}
+      </button>
+      {open && <div style={{ marginTop: 8 }}>{children}</div>}
+    </div>
+  );
+}
+
+function Button({ children, onClick, variant = 'primary', style, type = 'button' }) {
+  const base = {
+    border: 'none', borderRadius: 999, padding: '8px 16px', fontSize: 13, fontWeight: 600,
+    cursor: 'pointer', fontFamily: BODY_FONT,
+  };
+  const variants = {
+    primary: { background: COLORS.sage, color: '#fff' },
+    secondary: { background: COLORS.lavenderLight, color: COLORS.ink },
+    outline: { background: 'transparent', color: COLORS.azure, border: `1px solid ${COLORS.azure}` },
+    danger: { background: '#fff', color: '#a0524a', border: '1px solid #e3b3b3' },
+  };
+  return <button type={type} onClick={onClick} style={{ ...base, ...variants[variant], ...style }}>{children}</button>;
+}
+
+function TextInput(props) {
+  return <input {...props} style={{
+    width: '100%', padding: '9px 11px', borderRadius: 9, border: `1px solid ${COLORS.lavenderLight}`,
+    fontSize: 13, fontFamily: BODY_FONT, boxSizing: 'border-box', textAlign: 'center', ...props.style,
+  }} />;
+}
+function TextArea(props) {
+  return <textarea {...props} style={{
+    width: '100%', padding: '9px 11px', borderRadius: 9, border: `1px solid ${COLORS.lavenderLight}`,
+    fontSize: 13, fontFamily: BODY_FONT, boxSizing: 'border-box', minHeight: 74, resize: 'vertical', textAlign: 'center', ...props.style,
+  }} />;
+}
+function Select(props) {
+  return <select {...props} style={{
+    padding: '9px 11px', borderRadius: 9, border: `1px solid ${COLORS.lavenderLight}`,
+    fontSize: 13, fontFamily: BODY_FONT, textAlign: 'center', ...props.style,
+  }}>{props.children}</select>;
+}
+function Badge({ children, color }) {
+  return <span style={{
+    display: 'inline-block', fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 999,
+    background: color || COLORS.lavenderLight, color: COLORS.ink, margin: '0 4px 4px 0', fontFamily: BODY_FONT,
+  }}>{children}</span>;
+}
+
+// ---------------- DASHBOARD ----------------
+
+function Dashboard({ thesis, tasks, questions, checkpoints, cases, setTab }) {
+  const openQuestions = questions.filter(q => !q.answer).length;
+  const totalHours = tasks.reduce((s, t) => s + (Number(t.hours) || 0), 0);
+  const doneHours = tasks.filter(t => t.status === 'done').reduce((s, t) => s + (Number(t.hours) || 0), 0);
+  const openCheckpoints = checkpoints.filter(c => !c.done).length;
+
+  return (
+    <div>
+      <Section title="Working dissertation statement">
+        <Card>
+          <p style={{ margin: 0, fontSize: 15, fontFamily: DISPLAY_FONT, fontStyle: 'italic', color: COLORS.ink, lineHeight: 1.6 }}>
+            {thesis.statement || 'Not yet written — visit Thesis workspace to draft it.'}
+          </p>
+        </Card>
+      </Section>
+      <Section title="At a glance">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
+          <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{doneHours}/{totalHours}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Hours complete</div></Card>
+          <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{tasks.filter(t=>t.status==='done').length}/{tasks.length}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Syllabus items</div></Card>
+          <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{cases.length}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Cases logged</div></Card>
+          <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{openCheckpoints}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Checkpoints open</div></Card>
+          <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{openQuestions}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Open questions</div></Card>
+        </div>
+      </Section>
+      <Section title="Backup">
+        <ExportImport />
+      </Section>
+      <Section title="G.R.A.C.E. evidence trail">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+          {GRACE_LETTERS.map(letter => {
+            const count = (thesis.graceLog || []).filter(e => e.letter === letter).length;
+            return <Card key={letter}><div style={{ fontSize: 18, fontFamily: DATA_FONT, color: COLORS.sage }}>{count}</div><div style={{ fontSize: 11, color: COLORS.ink }}>{letter}</div></Card>;
+          })}
+        </div>
+      </Section>
+      <Section title="Quick links">
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <Button variant="outline" onClick={() => setTab('challenge')}>Get challenged today</Button>
+          <Button variant="outline" onClick={() => setTab('framework')}>Work on the framework</Button>
+          <Button variant="outline" onClick={() => setTab('checkpoints')}>Review checkpoints</Button>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+// ---------------- SYLLABUS & CALENDAR ----------------
+
+function Syllabus({ tasks, saveTasks }) {
+  const [form, setForm] = useState({ title: '', quarter: 'Q1', source: '', hours: '', status: 'planned' });
+  const quarters = ['Q1','Q2','Q3','Q4','Q5','Q6','Q7','Q8'];
+  const quarterLabels = {
+    Q1: 'Q1 · Sep–Nov 2026 · Foundations', Q2: 'Q2 · Dec 2026–Feb 2027 · Pharmacology & Digestive',
+    Q3: 'Q3 · Mar–May 2027 · Cardiovascular / Urinary / Respiratory', Q4: 'Q4 · Jun–Aug 2027 · Immune & Nervous + Year One Checkpoint',
+    Q5: 'Q5 · Sep–Nov 2027 · Skin & Musculoskeletal', Q6: 'Q6 · Dec 2027–Feb 2028 · Reproductive & Hormonal',
+    Q7: 'Q7 · Mar–May 2028 · Children\u2019s Health & Family', Q8: 'Q8 · Jun–Aug 2028 · Integration & AHG Application',
+  };
+
+  const addTask = () => {
+    if (!form.title.trim()) return;
+    saveTasks([...tasks, { ...form, id: Date.now() }]);
+    setForm({ title: '', quarter: form.quarter, source: '', hours: '', status: 'planned' });
+  };
+  const updateStatus = (id, status) => saveTasks(tasks.map(t => t.id === id ? { ...t, status } : t));
+  const removeTask = (id) => saveTasks(tasks.filter(t => t.id !== id));
+
+  return (
+    <div>
+      <Section title="Add a syllabus item">
+        <Card style={{ textAlign: 'left' }}>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <TextInput placeholder="Reading, module, or milestone" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px auto', gap: 8 }}>
+              <Select value={form.quarter} onChange={e => setForm({ ...form, quarter: e.target.value })}>{quarters.map(q => <option key={q} value={q}>{q}</option>)}</Select>
+              <TextInput placeholder="Source" value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} />
+              <TextInput placeholder="Hrs" type="number" value={form.hours} onChange={e => setForm({ ...form, hours: e.target.value })} />
+              <Button onClick={addTask}>Add</Button>
+            </div>
+          </div>
+        </Card>
+      </Section>
+      {quarters.map(q => {
+        const items = tasks.filter(t => t.quarter === q);
+        if (items.length === 0) return null;
+        const qHours = items.reduce((s, t) => s + (Number(t.hours) || 0), 0);
+        return (
+          <Collapsible key={q} title={quarterLabels[q] || q} badge={`${items.length} items · ${qHours} hrs`}>
+            {items.map(t => (
+              <Card key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left' }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{t.title}</div>
+                  <div style={{ fontSize: 12, color: COLORS.sage }}>{t.source} {t.hours ? `· ${t.hours} hrs` : ''}</div>
+                </div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <Select value={t.status} onChange={e => updateStatus(t.id, e.target.value)}>
+                    <option value="planned">Planned</option><option value="in-progress">In progress</option><option value="done">Done</option>
+                  </Select>
+                  <Button variant="danger" onClick={() => removeTask(t.id)}>Remove</Button>
+                </div>
+              </Card>
+            ))}
+          </Collapsible>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------- CHECKPOINTS ----------------
+
+function Checkpoints({ checkpoints, saveCheckpoints, tasks = [] }) {
+  const toggleItem = (cpId, idx) => {
+    saveCheckpoints(checkpoints.map(cp => cp.id === cpId
+      ? { ...cp, checked: { ...cp.checked, [idx]: !((cp.checked || {})[idx]) } }
+      : cp));
+  };
+  const toggleDone = (cpId) => saveCheckpoints(checkpoints.map(cp => cp.id === cpId ? { ...cp, done: !cp.done } : cp));
+
+  return (
+    <div>
+      <Section title="Interactive checkpoints">
+        {checkpoints.map(cp => {
+          const checked = cp.checked || {};
+          const completedCount = cp.items.filter((_, i) => checked[i]).length;
+          const quarterTasks = tasks.filter(t => t.quarter === cp.quarter);
+          const quarterDone = quarterTasks.filter(t => t.status === 'done').length;
+          return (
+            <Card key={cp.id} style={{ textAlign: 'left' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontFamily: DISPLAY_FONT, fontSize: 16 }}>{cp.title}</div>
+                  <div style={{ fontSize: 12, color: COLORS.sage }}>{cp.quarter} · {completedCount}/{cp.items.length} complete</div>
+                  {quarterTasks.length > 0 && (
+                    <div style={{ fontSize: 11, color: COLORS.azure, marginTop: 2 }}>
+                      {cp.quarter} syllabus progress: {quarterDone}/{quarterTasks.length} items done
+                    </div>
+                  )}
+                </div>
+                <Button variant={cp.done ? 'secondary' : 'primary'} onClick={() => toggleDone(cp.id)}>{cp.done ? 'Reopen' : 'Mark checkpoint done'}</Button>
+              </div>
+              {cp.items.map((item, idx) => (
+                <label key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '4px 0', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!checked[idx]} onChange={() => toggleItem(cp.id, idx)} />
+                  <span style={{ textDecoration: checked[idx] ? 'line-through' : 'none', color: checked[idx] ? COLORS.sage : COLORS.ink }}>{item}</span>
+                </label>
+              ))}
+            </Card>
+          );
+        })}
+      </Section>
+    </div>
+  );
+}
+
+// ---------------- THESIS WORKSPACE ----------------
+
+function Thesis({ thesis, saveThesis }) {
+  const [draftStatement, setDraftStatement] = useState(thesis.statement || '');
+  const [challenge, setChallenge] = useState('');
+  const [graceEntry, setGraceEntry] = useState({ letter: 'Gather', note: '' });
+
+  useEffect(() => setDraftStatement(thesis.statement || ''), [thesis.statement]);
+  const saveStatement = () => saveThesis({ ...thesis, statement: draftStatement });
+
+  const addChallenge = () => {
+    if (!challenge.trim()) return;
+    saveThesis({ ...thesis, challenges: [...(thesis.challenges || []), { id: Date.now(), text: challenge, date: new Date().toLocaleDateString() }] });
+    setChallenge('');
+  };
+  const removeChallenge = (id) => saveThesis({ ...thesis, challenges: (thesis.challenges || []).filter(c => c.id !== id) });
+
+  const addGraceEntry = () => {
+    if (!graceEntry.note.trim()) return;
+    saveThesis({ ...thesis, graceLog: [...(thesis.graceLog || []), { id: Date.now(), ...graceEntry, date: new Date().toLocaleDateString() }] });
+    setGraceEntry({ letter: graceEntry.letter, note: '' });
+  };
+  const removeGraceEntry = (id) => saveThesis({ ...thesis, graceLog: (thesis.graceLog || []).filter(g => g.id !== id) });
+
+  return (
+    <div>
+      <Section title="Working dissertation statement">
+        <Card>
+          <TextArea value={draftStatement} onChange={e => setDraftStatement(e.target.value)} placeholder="What does a clinically rigorous, ancestrally-informed herbal protocol for maternal burnout look like?" />
+          <div style={{ marginTop: 8 }}><Button onClick={saveStatement}>Save statement</Button></div>
+        </Card>
+      </Section>
+      <Section title="Challenge & revise">
+        <Card>
+          <TextArea value={challenge} onChange={e => setChallenge(e.target.value)} placeholder="Argue against your own statement, or note where it's proven too narrow or too broad." />
+          <div style={{ marginTop: 8 }}><Button onClick={addChallenge}>Log this challenge</Button></div>
+        </Card>
+        {(thesis.challenges || []).slice().reverse().map(c => (
+          <Card key={c.id}>
+            <div style={{ fontSize: 12, color: COLORS.sage, marginBottom: 4 }}>{c.date}</div>
+            <div style={{ fontSize: 13 }}>{c.text}</div>
+            <div style={{ marginTop: 6 }}><Button variant="danger" onClick={() => removeChallenge(c.id)}>Remove</Button></div>
+          </Card>
+        ))}
+      </Section>
+      <Section title="G.R.A.C.E. letter log">
+        <Card>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <Select value={graceEntry.letter} onChange={e => setGraceEntry({ ...graceEntry, letter: e.target.value })}>{GRACE_LETTERS.map(l => <option key={l} value={l}>{l}</option>)}</Select>
+            <TextInput placeholder="What sharpened your understanding of this letter?" value={graceEntry.note} onChange={e => setGraceEntry({ ...graceEntry, note: e.target.value })} />
+            <Button onClick={addGraceEntry}>Log</Button>
+          </div>
+        </Card>
+        {(thesis.graceLog || []).slice().reverse().map(g => (
+          <Card key={g.id}>
+            <Badge>{g.letter}</Badge><span style={{ fontSize: 12, color: COLORS.sage }}>{g.date}</span>
+            <div style={{ fontSize: 13, marginTop: 4 }}>{g.note}</div>
+            <div style={{ marginTop: 6 }}><Button variant="danger" onClick={() => removeGraceEntry(g.id)}>Remove</Button></div>
+          </Card>
+        ))}
+      </Section>
+    </div>
+  );
+}
+
+// ---------------- CASE LOG ----------------
+
+const EMPTY_CASE = {
+  clientLabel: '', complaint: '', history: '', protocol: '', constituentBasis: '',
+  safetyCheck: '', outcome: '', confounds: '', dissertationNote: '', graceLetter: 'Gather',
+};
+
+function CaseLog({ cases, saveCases }) {
+  const [form, setForm] = useState(EMPTY_CASE);
+  const [expanded, setExpanded] = useState(false);
+
+  const addCase = () => {
+    if (!form.complaint.trim() && !form.clientLabel.trim()) return;
+    saveCases([{ ...form, id: Date.now(), date: new Date().toLocaleDateString() }, ...cases]);
+    setForm(EMPTY_CASE);
+    setExpanded(false);
+  };
+  const removeCase = (id) => { if (window.confirm('Delete this case permanently? This cannot be undone.')) saveCases(cases.filter(c => c.id !== id)); };
+
+  const fieldRow = (placeholder, key, area = true) => {
+    const Input = area ? TextArea : TextInput;
+    return <Input placeholder={placeholder} value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} style={{ marginBottom: 8 }} />;
+  };
+
+  return (
+    <div>
+      <Section title="Case write-up protocol">
+        <Card>
+          <p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>
+            This is your original dissertation data. Every case gets the confounds line — it's the one that turns
+            a folder of anecdotes into a real case series.
+          </p>
+        </Card>
+      </Section>
+      <Section title={expanded ? 'New case' : 'Log a new case'} right={
+        <Button variant="outline" onClick={() => setExpanded(e => !e)}>{expanded ? 'Collapse' : 'Expand form'}</Button>
+      }>
+        <Card style={{ textAlign: 'left' }}>
+          <TextInput placeholder="Client label (initials or code — never a full name)" value={form.clientLabel} onChange={e => setForm({ ...form, clientLabel: e.target.value })} style={{ marginBottom: 8 }} />
+          {fieldRow('Presenting complaint', 'complaint')}
+          {expanded && <>
+            {fieldRow('Relevant history (from intake narrative)', 'history')}
+            {fieldRow('Protocol given (herbs, %, form, dose)', 'protocol')}
+            {fieldRow('Constituent basis (Ganora phase / Hoffmann chapter)', 'constituentBasis')}
+            {fieldRow('Safety check performed (Karch cross-reference, contraindications)', 'safetyCheck')}
+            {fieldRow('Outcome at follow-up', 'outcome')}
+            {fieldRow('Confounds you could not rule out', 'confounds')}
+            {fieldRow('What this adds to or challenges in your dissertation question', 'dissertationNote')}
+            <Select value={form.graceLetter} onChange={e => setForm({ ...form, graceLetter: e.target.value })} style={{ marginBottom: 8 }}>
+              {GRACE_LETTERS.map(l => <option key={l} value={l}>Most engaged letter: {l}</option>)}
+            </Select>
+          </>}
+          <Button onClick={addCase}>Save case</Button>
+        </Card>
+      </Section>
+      <Section title={`Case log (${cases.length})`}>
+        {cases.map(c => (
+          <Collapsible key={c.id} title={c.clientLabel || 'Unlabeled case'} badge={c.date} defaultOpen={false}>
+            <Card style={{ textAlign: 'left' }}>
+              {c.complaint && <p style={{ fontSize: 13 }}><b>Complaint:</b> {c.complaint}</p>}
+              {c.history && <p style={{ fontSize: 13 }}><b>History:</b> {c.history}</p>}
+              {c.protocol && <p style={{ fontSize: 13 }}><b>Protocol:</b> {c.protocol}</p>}
+              {c.constituentBasis && <p style={{ fontSize: 13 }}><b>Constituent basis:</b> {c.constituentBasis}</p>}
+              {c.safetyCheck && <p style={{ fontSize: 13 }}><b>Safety check:</b> {c.safetyCheck}</p>}
+              {c.outcome && <p style={{ fontSize: 13 }}><b>Outcome:</b> {c.outcome}</p>}
+              {c.confounds && <p style={{ fontSize: 13 }}><b>Confounds:</b> {c.confounds}</p>}
+              {c.dissertationNote && <p style={{ fontSize: 13, color: COLORS.azure }}><b>Dissertation note:</b> {c.dissertationNote}</p>}
+              <Badge>{c.graceLetter}</Badge>
+              <div style={{ marginTop: 8 }}><Button variant="danger" onClick={() => removeCase(c.id)}>Remove</Button></div>
+            </Card>
+          </Collapsible>
+        ))}
+        {cases.length === 0 && <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>No cases logged yet.</p></Card>}
+      </Section>
+    </div>
+  );
+}
+
+// ---------------- EXPORT / IMPORT ----------------
+
+function ExportImport() {
+  const [message, setMessage] = useState('');
+
+  const doExport = () => {
+    const data = getAllHubData();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tulsi-grace-study-hub-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setMessage('Backup downloaded.');
+  };
+
+  const doImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const data = JSON.parse(evt.target.result);
+        if (!window.confirm('This will overwrite all current data in this browser with the backup file. Continue?')) return;
+        restoreAllHubData(data);
+        setMessage('Restored. Reloading...');
+        setTimeout(() => window.location.reload(), 800);
+      } catch (err) {
+        setMessage('That file could not be read as a backup.');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  return (
+    <Card>
+      <p style={{ margin: '0 0 10px', fontSize: 13, color: COLORS.sage }}>
+        Everything here lives in this browser only. Back it up regularly — especially before clearing browser data or switching devices.
+      </p>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+        <Button onClick={doExport}>Export all data</Button>
+        <label style={{
+          border: `1px solid ${COLORS.azure}`, color: COLORS.azure, borderRadius: 999, padding: '8px 16px',
+          fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: BODY_FONT,
+        }}>
+          Import backup
+          <input type="file" accept="application/json" onChange={doImport} style={{ display: 'none' }} />
+        </label>
+      </div>
+      {message && <p style={{ fontSize: 12, color: COLORS.azure, marginTop: 8 }}>{message}</p>}
+    </Card>
+  );
+}
+
+// ---------------- FRAMEWORK BUILDER ----------------
+
+function FrameworkBuilder({ framework, saveFramework }) {
+  const [entry, setEntry] = useState({ letter: 'Gather', field: 'strength', text: '' });
+  const fields = [
+    { id: 'strength', label: 'Strongest here because...' },
+    { id: 'gap', label: 'Gap or weakness' },
+    { id: 'evidence', label: 'Evidence/research support' },
+    { id: 'opportunity', label: 'Could be stronger if...' },
+  ];
+
+  const add = () => {
+    if (!entry.text.trim()) return;
+    const entries = [...(framework.entries || []), { id: Date.now(), ...entry, date: new Date().toLocaleDateString() }];
+    saveFramework({ ...framework, entries });
+    setEntry({ ...entry, text: '' });
+  };
+  const remove = (id) => { if (window.confirm('Delete this framework entry permanently?')) saveFramework({ ...framework, entries: (framework.entries || []).filter(e => e.id !== id) }); };
+
+  return (
+    <div>
+      <Section title="Framework builder — G.R.A.C.E.">
+        <Card>
+          <p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>
+            For each letter, build the case for why it works, where it's thin, what backs it up, and where it could grow.
+            This is the raw material for the Capstone Synthesis chapter defending your framework.
+          </p>
+        </Card>
+      </Section>
+      <Section title="Add an entry">
+        <Card>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Select value={entry.letter} onChange={e => setEntry({ ...entry, letter: e.target.value })} style={{ flex: 1 }}>{GRACE_LETTERS.map(l => <option key={l} value={l}>{l}</option>)}</Select>
+              <Select value={entry.field} onChange={e => setEntry({ ...entry, field: e.target.value })} style={{ flex: 1 }}>{fields.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}</Select>
+            </div>
+            <TextArea placeholder="Write the entry" value={entry.text} onChange={e => setEntry({ ...entry, text: e.target.value })} />
+            <Button onClick={add}>Add entry</Button>
+          </div>
+        </Card>
+      </Section>
+      {GRACE_LETTERS.map(letter => {
+        const entries = (framework.entries || []).filter(e => e.letter === letter);
+        return (
+          <Collapsible key={letter} title={letter} badge={entries.length} defaultOpen={false}>
+            {fields.map(f => {
+              const fieldEntries = entries.filter(e => e.field === f.id);
+              if (fieldEntries.length === 0) return null;
+              return (
+                <div key={f.id} style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.azure, marginBottom: 4, textAlign: 'center' }}>{f.label}</div>
+                  {fieldEntries.map(e => (
+                    <Card key={e.id}>
+                      <div style={{ fontSize: 13 }}>{e.text}</div>
+                      <div style={{ marginTop: 6 }}><Button variant="danger" onClick={() => remove(e.id)}>Remove</Button></div>
+                    </Card>
+                  ))}
+                </div>
+              );
+            })}
+            {entries.length === 0 && <p style={{ fontSize: 12, color: COLORS.sage, textAlign: 'center' }}>No entries yet for {letter}.</p>}
+          </Collapsible>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------- CHALLENGE ME ----------------
+
+const CHALLENGE_MODES = [
+  { id: 'socratic', label: 'Socratic questioning', prompt: 'Ask me one sharp Socratic question that pushes on a weak point or unexamined assumption in the following idea. Do not answer it for me — just ask the question, in plain client-friendly language where possible, and briefly say why it matters.' },
+  { id: 'counter', label: 'Argue the opposite', prompt: 'Take the opposite position from the following idea and argue it as persuasively as you honestly can, citing the kind of evidence or reasoning that would support the opposite view. Be direct, not gentle.' },
+  { id: 'quiz', label: 'Quiz me', prompt: 'Write 3 quiz questions (with answers hidden below a line) testing whether I actually understand the clinical/phytochemical reasoning behind the following, at a level a clinical herbalism comprehensive exam would expect.' },
+  { id: 'perspective', label: 'Different perspective', prompt: 'Reframe the following from a perspective I have probably not considered (e.g., a skeptical MD, a different herbal tradition, a client who tried this and it did not work, a statistician). Be concrete and specific, not generic.' },
+  { id: 'gaps', label: 'Find the gaps', prompt: 'Identify what is missing, oversimplified, or unsupported in the following, as an honest peer reviewer would. List the top 3 gaps, ranked by how much they matter.' },
+];
+
+function ChallengeMe({ log, saveLog, thesis, framework }) {
+  const [mode, setMode] = useState('socratic');
+  const [input, setInput] = useState('');
+  const [useContext, setUseContext] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const gaps = (framework.entries || []).filter(e => e.field === 'gap');
+  const contextBlock = useMemo(() => {
+    if (!useContext) return '';
+    const parts = [];
+    if (thesis.statement) parts.push(`My current working dissertation statement is: "${thesis.statement}"`);
+    if (gaps.length > 0) {
+      parts.push(`Known gaps I've already flagged in my G.R.A.C.E. framework: ${gaps.slice(-5).map(g => `[${g.letter}] ${g.text}`).join(' | ')}`);
+    }
+    if ((thesis.challenges || []).length > 0) {
+      const last = thesis.challenges[thesis.challenges.length - 1];
+      parts.push(`The last self-challenge I logged was: "${last.text}"`);
+    }
+    return parts.length ? `Background context on my work (use this to make your challenge specific to me, not generic):\n${parts.join('\n')}\n\n` : '';
+  }, [useContext, thesis, gaps]);
+
+  const run = async () => {
+    if (!input.trim()) return;
+    setLoading(true); setError('');
+    const modeObj = CHALLENGE_MODES.find(m => m.id === mode);
+    try {
+      const response = await fetch('/.netlify/functions/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: `${contextBlock}${modeObj.prompt}\n\n---\n\n${input}` }),
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+      const entry = { id: Date.now(), mode: modeObj.label, input, output: data.text || 'No response returned.', date: new Date().toLocaleDateString(), usedContext: useContext };
+      saveLog([entry, ...log]);
+      setInput('');
+    } catch (e) {
+      setError('Could not reach the challenge engine right now — check that GROQ_API_KEY is set in Netlify, then try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <Section title="Challenge me">
+        <Card>
+          <p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>
+            Paste an idea, a claim, a case reasoning, or a piece of your framework. Pick a mode and get pushed on it —
+            your stand-in for peer review until you have real peers reviewing alongside you.
+          </p>
+        </Card>
+      </Section>
+      <Section title="Set up a challenge">
+        <Card style={{ textAlign: 'left' }}>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <Select value={mode} onChange={e => setMode(e.target.value)}>{CHALLENGE_MODES.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}</Select>
+            <TextArea placeholder="Paste the idea, claim, or reasoning you want challenged..." value={input} onChange={e => setInput(e.target.value)} style={{ minHeight: 110 }} />
+            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontSize: 12, color: COLORS.sage, cursor: 'pointer' }}>
+              <input type="checkbox" checked={useContext} onChange={e => setUseContext(e.target.checked)} />
+              Include my dissertation statement and known framework gaps as context
+            </label>
+            <Button onClick={run} style={{ opacity: loading ? 0.6 : 1 }}>{loading ? 'Thinking...' : 'Challenge this'}</Button>
+            {error && <p style={{ fontSize: 12, color: '#a0524a', margin: 0 }}>{error}</p>}
+          </div>
+        </Card>
+      </Section>
+      <Section title={`Challenge log (${log.length})`}>
+        {log.map(l => (
+          <Card key={l.id} style={{ textAlign: 'left' }}>
+            <Badge color={COLORS.lavender}>{l.mode}</Badge>
+            {l.usedContext && <Badge color={COLORS.lavenderLight}>with context</Badge>}
+            <span style={{ fontSize: 12, color: COLORS.sage }}>{l.date}</span>
+            <div style={{ fontSize: 12, color: COLORS.sage, marginTop: 6, fontStyle: 'italic' }}>You submitted: {l.input.slice(0, 140)}{l.input.length > 140 ? '…' : ''}</div>
+            <div style={{ fontSize: 13, marginTop: 8, whiteSpace: 'pre-wrap', color: COLORS.ink }}>{l.output}</div>
+          </Card>
+        ))}
+        {log.length === 0 && <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>No challenges logged yet.</p></Card>}
+      </Section>
+    </div>
+  );
+}
+
+// ---------------- NOTES ----------------
+
+function Notes({ notes, saveNotes }) {
+  const [form, setForm] = useState({ title: '', body: '', tag: 'Constituent Bridge' });
+  const tags = ['Constituent Bridge', 'Case note', 'GRACE reflection', 'Parking lot question', 'General'];
+
+  const addNote = () => {
+    if (!form.title.trim() && !form.body.trim()) return;
+    saveNotes([{ ...form, id: Date.now(), date: new Date().toLocaleDateString() }, ...notes]);
+    setForm({ title: '', body: '', tag: form.tag });
+  };
+  const removeNote = (id) => { if (window.confirm('Delete this note permanently?')) saveNotes(notes.filter(n => n.id !== id)); };
+
+  return (
+    <div>
+      <Section title="Capture a note">
+        <Card style={{ textAlign: 'left' }}>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <TextInput placeholder="Title" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={{ flex: 1 }} />
+              <Select value={form.tag} onChange={e => setForm({ ...form, tag: e.target.value })}>{tags.map(t => <option key={t} value={t}>{t}</option>)}</Select>
+            </div>
+            <TextArea placeholder="Note content" value={form.body} onChange={e => setForm({ ...form, body: e.target.value })} />
+            <Button onClick={addNote}>Save note</Button>
+          </div>
+        </Card>
+      </Section>
+      <Section title={`All notes (${notes.length})`}>
+        {notes.map(n => (
+          <Card key={n.id}>
+            <Badge>{n.tag}</Badge><span style={{ fontSize: 12, color: COLORS.sage }}>{n.date}</span>
+            {n.title && <div style={{ fontWeight: 600, fontSize: 13, marginTop: 6 }}>{n.title}</div>}
+            <div style={{ fontSize: 13, marginTop: 4, whiteSpace: 'pre-wrap' }}>{n.body}</div>
+            <div style={{ marginTop: 6 }}><Button variant="danger" onClick={() => removeNote(n.id)}>Remove</Button></div>
+          </Card>
+        ))}
+      </Section>
+    </div>
+  );
+}
+
+// ---------------- LIBRARY ----------------
+
+function Library({ items, saveItems }) {
+  const [form, setForm] = useState({ title: '', author: '', type: 'Book', tags: '', quote: '', reflection: '' });
+  const [filterType, setFilterType] = useState('All');
+  const [filterTag, setFilterTag] = useState('All');
+  const types = ['Book', 'Article', 'Video', 'Podcast', 'Study'];
+
+  const allTags = useMemo(() => {
+    const set = new Set();
+    items.forEach(i => (i.tags || '').split(',').map(t => t.trim()).filter(Boolean).forEach(t => set.add(t)));
+    return Array.from(set).sort();
+  }, [items]);
+
+  const addItem = () => {
+    if (!form.title.trim()) return;
+    saveItems([{ ...form, id: Date.now() }, ...items]);
+    setForm({ title: '', author: '', type: form.type, tags: '', quote: '', reflection: '' });
+  };
+  const removeItem = (id) => { if (window.confirm('Delete this library item permanently?')) saveItems(items.filter(i => i.id !== id)); };
+
+  const filtered = items.filter(i => {
+    const typeMatch = filterType === 'All' || i.type === filterType;
+    const tagMatch = filterTag === 'All' || (i.tags || '').split(',').map(t => t.trim()).includes(filterTag);
+    return typeMatch && tagMatch;
+  });
+
+  const grouped = types.map(t => ({ type: t, items: filtered.filter(i => i.type === t) })).filter(g => g.items.length > 0);
+
+  return (
+    <div>
+      <Section title="Add a media item or annotation">
+        <Card style={{ textAlign: 'left' }}>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <TextInput placeholder="Title" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={{ flex: 2 }} />
+              <TextInput placeholder="Author / creator" value={form.author} onChange={e => setForm({ ...form, author: e.target.value })} style={{ flex: 1 }} />
+              <Select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>{types.map(t => <option key={t} value={t}>{t}</option>)}</Select>
+            </div>
+            <TextInput placeholder="Tags, comma separated (e.g. adaptogens, ancestral, HPA axis)" value={form.tags} onChange={e => setForm({ ...form, tags: e.target.value })} />
+            <TextArea placeholder="Quote or excerpt worth keeping" value={form.quote} onChange={e => setForm({ ...form, quote: e.target.value })} />
+            <TextArea placeholder="Your reflection — why this matters to your dissertation question" value={form.reflection} onChange={e => setForm({ ...form, reflection: e.target.value })} />
+            <Button onClick={addItem}>Add to library</Button>
+          </div>
+        </Card>
+      </Section>
+      <Section title="Filter" right={null}>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <Select value={filterType} onChange={e => setFilterType(e.target.value)}>
+            <option value="All">All types</option>{types.map(t => <option key={t} value={t}>{t}</option>)}
+          </Select>
+          <Select value={filterTag} onChange={e => setFilterTag(e.target.value)}>
+            <option value="All">All tags</option>{allTags.map(t => <option key={t} value={t}>{t}</option>)}
+          </Select>
+        </div>
+      </Section>
+      {grouped.map(g => (
+        <Collapsible key={g.type} title={g.type} badge={g.items.length}>
+          {g.items.map(i => (
+            <Card key={i.id}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>{i.title}</div>
+              {i.author && <div style={{ fontSize: 12, color: COLORS.sage }}>{i.author}</div>}
+              {i.tags && <div style={{ marginTop: 6 }}>{i.tags.split(',').map(t => t.trim()).filter(Boolean).map(t => <Badge key={t} color={COLORS.lavender}>{t}</Badge>)}</div>}
+              {i.quote && <div style={{ fontSize: 13, fontStyle: 'italic', marginTop: 6, color: COLORS.ink }}>"{i.quote}"</div>}
+              {i.reflection && <div style={{ fontSize: 13, marginTop: 4, color: COLORS.sage }}>{i.reflection}</div>}
+              <div style={{ marginTop: 6 }}><Button variant="danger" onClick={() => removeItem(i.id)}>Remove</Button></div>
+            </Card>
+          ))}
+        </Collapsible>
+      ))}
+      {filtered.length === 0 && <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>No items match this filter.</p></Card>}
+    </div>
+  );
+}
+
+// ---------------- CITATIONS ----------------
+
+function Citations({ citations, saveCitations }) {
+  const [form, setForm] = useState({ author: '', year: '', title: '', source: '', claim: '', evidenceType: 'RCT' });
+  const [search, setSearch] = useState('');
+  const evidenceTypes = ['RCT', 'Cohort study', 'Case series', 'In-vitro', 'Systematic review', 'Traditional use', 'Other'];
+
+  const addCitation = () => {
+    if (!form.title.trim()) return;
+    saveCitations([{ ...form, id: Date.now() }, ...citations]);
+    setForm({ author: '', year: '', title: '', source: '', claim: '', evidenceType: form.evidenceType });
+  };
+  const removeCitation = (id) => { if (window.confirm('Delete this citation permanently?')) saveCitations(citations.filter(c => c.id !== id)); };
+  const filtered = citations.filter(c => !search.trim() || [c.author, c.title, c.claim, c.source].join(' ').toLowerCase().includes(search.toLowerCase()));
+  const copyCitation = (c) => navigator.clipboard?.writeText(`${c.author} (${c.year}). ${c.title}. ${c.source}.`);
+
+  return (
+    <div>
+      <Section title="Add a citation">
+        <Card style={{ textAlign: 'left' }}>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px', gap: 8 }}>
+              <TextInput placeholder="Author(s)" value={form.author} onChange={e => setForm({ ...form, author: e.target.value })} />
+              <TextInput placeholder="Year" value={form.year} onChange={e => setForm({ ...form, year: e.target.value })} />
+            </div>
+            <TextInput placeholder="Title of study/article" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <TextInput placeholder="Source / journal / URL" value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} style={{ flex: 2 }} />
+              <Select value={form.evidenceType} onChange={e => setForm({ ...form, evidenceType: e.target.value })}>{evidenceTypes.map(t => <option key={t} value={t}>{t}</option>)}</Select>
+            </div>
+            <TextArea placeholder="What claim does this support?" value={form.claim} onChange={e => setForm({ ...form, claim: e.target.value })} />
+            <Button onClick={addCitation}>Add to bank</Button>
+          </div>
+        </Card>
+      </Section>
+      <Section title={`Citation bank (${citations.length})`} right={<TextInput placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} style={{ width: 160 }} />}>
+        {filtered.map(c => (
+          <Card key={c.id}>
+            <Badge color={COLORS.lavender}>{c.evidenceType}</Badge>
+            <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>{c.author} ({c.year})</div>
+            <div style={{ fontSize: 13 }}>{c.title}</div>
+            <div style={{ fontSize: 12, color: COLORS.sage }}>{c.source}</div>
+            {c.claim && <div style={{ fontSize: 12, marginTop: 4, color: COLORS.ink }}>Supports: {c.claim}</div>}
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginTop: 8 }}>
+              <Button variant="secondary" onClick={() => copyCitation(c)}>Copy</Button>
+              <Button variant="danger" onClick={() => removeCitation(c.id)}>Remove</Button>
+            </div>
+          </Card>
+        ))}
+      </Section>
+    </div>
+  );
+}
+
+// ---------------- QUESTIONS ----------------
+
+function Questions({ questions, saveQuestions }) {
+  const [newQ, setNewQ] = useState('');
+  const [drafts, setDrafts] = useState({});
+
+  const addQuestion = () => {
+    if (!newQ.trim()) return;
+    saveQuestions([{ id: Date.now(), question: newQ, answer: '', support: '', date: new Date().toLocaleDateString() }, ...questions]);
+    setNewQ('');
+  };
+  const removeQuestion = (id) => { if (window.confirm('Delete this question permanently?')) saveQuestions(questions.filter(q => q.id !== id)); };
+  const saveAnswer = (id) => {
+    const d = drafts[id] || {};
+    saveQuestions(questions.map(q => q.id === id ? { ...q, answer: d.answer ?? q.answer, support: d.support ?? q.support } : q));
+  };
+  const setDraft = (id, field, val) => setDrafts({ ...drafts, [id]: { ...drafts[id], [field]: val } });
+
+  const open = questions.filter(q => !q.answer);
+  const answered = questions.filter(q => q.answer);
+
+  return (
+    <div>
+      <Section title="Park a question">
+        <Card>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <TextInput placeholder="What are you trying to find out?" value={newQ} onChange={e => setNewQ(e.target.value)} />
+            <Button onClick={addQuestion}>Add</Button>
+          </div>
+        </Card>
+      </Section>
+      <Section title={`Open questions (${open.length})`}>
+        {open.map(q => (
+          <Card key={q.id} style={{ textAlign: 'left' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, textAlign: 'center' }}>{q.question}</div>
+            <div style={{ fontSize: 12, color: COLORS.sage, marginBottom: 6, textAlign: 'center' }}>{q.date}</div>
+            <TextArea placeholder="Answer, once you've found it" value={drafts[q.id]?.answer ?? q.answer} onChange={e => setDraft(q.id, 'answer', e.target.value)} style={{ marginBottom: 6 }} />
+            <TextArea placeholder="What supports this answer?" value={drafts[q.id]?.support ?? q.support} onChange={e => setDraft(q.id, 'support', e.target.value)} />
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginTop: 6 }}>
+              <Button onClick={() => saveAnswer(q.id)}>Save answer</Button>
+              <Button variant="danger" onClick={() => removeQuestion(q.id)}>Remove</Button>
+            </div>
+          </Card>
+        ))}
+        {open.length === 0 && <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>No open questions right now.</p></Card>}
+      </Section>
+      <Section title={`Answered (${answered.length})`}>
+        {answered.map(q => (
+          <Card key={q.id}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>{q.question}</div>
+            <div style={{ fontSize: 13, marginTop: 6, color: COLORS.azure }}>{q.answer}</div>
+            {q.support && <div style={{ fontSize: 12, marginTop: 4, color: COLORS.sage }}>Support: {q.support}</div>}
+            <div style={{ marginTop: 6 }}><Button variant="danger" onClick={() => removeQuestion(q.id)}>Remove</Button></div>
+          </Card>
+        ))}
+      </Section>
+    </div>
+  );
+}
+
+// ---------------- APP ----------------
+
+function GlobalSearch({ notes, library, citations, questions, setTab }) {
+  const [q, setQ] = useState('');
+  const results = useMemo(() => {
+    if (!q.trim()) return [];
+    const term = q.toLowerCase();
+    const out = [];
+    notes.forEach(n => { if ((n.title + n.body).toLowerCase().includes(term)) out.push({ type: 'Note', label: n.title || n.body.slice(0, 40), tab: 'notes' }); });
+    library.forEach(l => { if ((l.title + l.author + l.tags + l.reflection).toLowerCase().includes(term)) out.push({ type: 'Library', label: l.title, tab: 'library' }); });
+    citations.forEach(c => { if ((c.title + c.author + c.claim).toLowerCase().includes(term)) out.push({ type: 'Citation', label: `${c.author} — ${c.title}`, tab: 'citations' }); });
+    questions.forEach(qu => { if ((qu.question + qu.answer).toLowerCase().includes(term)) out.push({ type: 'Question', label: qu.question, tab: 'questions' }); });
+    return out.slice(0, 8);
+  }, [q, notes, library, citations, questions]);
+
+  return (
+    <div style={{ marginBottom: 20, position: 'relative' }}>
+      <TextInput placeholder="Search notes, library, citations, questions..." value={q} onChange={e => setQ(e.target.value)} />
+      {results.length > 0 && (
+        <div style={{ background: COLORS.white, border: `1px solid ${COLORS.lavenderLight}`, borderRadius: 10, marginTop: 6, overflow: 'hidden' }}>
+          {results.map((r, i) => (
+            <button key={i} onClick={() => { setTab(r.tab); setQ(''); }} style={{
+              display: 'block', width: '100%', textAlign: 'center', padding: '8px 12px', border: 'none',
+              borderBottom: i < results.length - 1 ? `1px solid ${COLORS.lavenderLight}` : 'none',
+              background: 'transparent', cursor: 'pointer', fontFamily: BODY_FONT, fontSize: 12,
+            }}>
+              <Badge color={COLORS.lavender}>{r.type}</Badge>{r.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function StudyHub() {
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [thesis, saveThesis, thesisLoaded] = useStore('rr-phd-thesis', { statement: '', challenges: [], graceLog: [] });
+  const [tasks, saveTasks] = useStore('rr-phd-tasks', SEED_SYLLABUS.map((t, i) => ({ ...t, id: i + 1 })));
+  const [checkpoints, saveCheckpoints] = useStore('rr-phd-checkpoints', SEED_CHECKPOINTS.map((c, i) => ({ ...c, id: i + 1 })));
+  const [notes, saveNotes] = useStore('rr-phd-notes', []);
+  const [library, saveLibrary] = useStore('rr-phd-library', []);
+  const [citations, saveCitations] = useStore('rr-phd-citations', []);
+  const [questions, saveQuestions] = useStore('rr-phd-questions', []);
+  const [framework, saveFramework] = useStore('rr-phd-framework', { entries: [] });
+  const [challengeLog, saveChallengeLog] = useStore('rr-phd-challenges', []);
+  const [cases, saveCases] = useStore('rr-phd-cases', []);
+
+  return (
+    <div style={{ fontFamily: BODY_FONT, background: COLORS.cream, minHeight: '100vh', padding: '24px 16px' }}>
+      <style>{FONT_IMPORT}</style>
+      <div style={{ maxWidth: 780, margin: '0 auto', textAlign: 'center' }}>
+        <div style={{ fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', color: COLORS.sage, fontWeight: 700 }}>Tulsi &amp; Grace</div>
+        <h1 style={{ margin: '4px 0 20px', fontFamily: DISPLAY_FONT, fontSize: 28, fontWeight: 700, color: COLORS.ink }}>Formation Study Hub</h1>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center', marginBottom: 26, borderBottom: `1px solid ${COLORS.lavenderLight}`, paddingBottom: 14 }}>
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
+              padding: '7px 14px', borderRadius: 999, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+              fontFamily: BODY_FONT, background: activeTab === t.id ? COLORS.sage : COLORS.white,
+              color: activeTab === t.id ? '#fff' : COLORS.ink,
+            }}>{t.label}</button>
+          ))}
+        </div>
+
+        <GlobalSearch notes={notes} library={library} citations={citations} questions={questions} setTab={setActiveTab} />
+
+        {!thesisLoaded ? <p style={{ fontSize: 13, color: COLORS.sage }}>Loading your hub...</p> : (
+          <div style={{ textAlign: 'center' }}>
+            {activeTab === 'dashboard' && <Dashboard thesis={thesis} tasks={tasks} questions={questions} checkpoints={checkpoints} cases={cases} setTab={setActiveTab} />}
+            {activeTab === 'syllabus' && <Syllabus tasks={tasks} saveTasks={saveTasks} />}
+            {activeTab === 'checkpoints' && <Checkpoints checkpoints={checkpoints} saveCheckpoints={saveCheckpoints} tasks={tasks} />}
+            {activeTab === 'thesis' && <Thesis thesis={thesis} saveThesis={saveThesis} />}
+            {activeTab === 'cases' && <CaseLog cases={cases} saveCases={saveCases} />}
+            {activeTab === 'framework' && <FrameworkBuilder framework={framework} saveFramework={saveFramework} />}
+            {activeTab === 'challenge' && <ChallengeMe log={challengeLog} saveLog={saveChallengeLog} thesis={thesis} framework={framework} />}
+            {activeTab === 'notes' && <Notes notes={notes} saveNotes={saveNotes} />}
+            {activeTab === 'library' && <Library items={library} saveItems={saveLibrary} />}
+            {activeTab === 'citations' && <Citations citations={citations} saveCitations={saveCitations} />}
+            {activeTab === 'questions' && <Questions questions={questions} saveQuestions={saveQuestions} />}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
