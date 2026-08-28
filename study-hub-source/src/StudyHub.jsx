@@ -271,7 +271,7 @@ function Badge({ children, color, textColor }) {
 
 // ---------------- DASHBOARD ----------------
 
-function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal, synthesisLog, setTab }) {
+function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal, synthesisLog, setTab, syncPanelProps }) {
   const openQuestions = questions.filter(q => !q.answer).length;
   const totalHours = tasks.reduce((s, t) => s + (Number(t.hours) || 0), 0);
   const doneHours = tasks.filter(t => t.status === 'done').reduce((s, t) => s + (Number(t.hours) || 0), 0);
@@ -302,6 +302,9 @@ function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal,
           <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{contradicting}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Complicate/contradict thesis</div></Card>
           <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{synthesisLog.length}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Weekly syntheses saved</div></Card>
         </div>
+      </Section>
+      <Section title="Sync across devices">
+        <SyncPanel {...syncPanelProps} />
       </Section>
       <Section title="Backup">
         <ExportImport />
@@ -577,6 +580,47 @@ function CaseLog({ cases, saveCases }) {
 }
 
 // ---------------- EXPORT / IMPORT ----------------
+
+function SyncPanel({ syncKey, syncStatus, lastSyncedAt, onStartSync, onJoinSync, onStopSync, onManualPush }) {
+  const [joinInput, setJoinInput] = useState('');
+  const [showJoin, setShowJoin] = useState(false);
+
+  if (!syncKey) {
+    return (
+      <Card>
+        <p style={{ margin: '0 0 10px', fontSize: 13, color: COLORS.sage }}>
+          Not syncing yet — this browser's data stays local until you set up a key. Use the same key on every
+          device you want kept in sync, exactly like your Library Tracker's sync key.
+        </p>
+        {!showJoin ? (
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <Button onClick={onStartSync}>Start syncing this device</Button>
+            <Button variant="secondary" onClick={() => setShowJoin(true)}>I have a key already</Button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+            <TextInput placeholder="Paste your sync key" value={joinInput} onChange={e => setJoinInput(e.target.value)} style={{ maxWidth: 220 }} />
+            <Button onClick={() => onJoinSync(joinInput)}>Join</Button>
+          </div>
+        )}
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <p style={{ margin: '0 0 6px', fontSize: 13, color: COLORS.sage }}>Sync key (use this on every device):</p>
+      <p style={{ margin: '0 0 10px', fontFamily: DATA_FONT, fontSize: 15, color: COLORS.ink }}>{syncKey}</p>
+      <p style={{ margin: '0 0 12px', fontSize: 12, color: COLORS.sage }}>
+        {syncStatus === 'saving' ? 'Syncing...' : syncStatus === 'error' ? 'Could not reach the sync server — this device still works, just not synced right now.' : lastSyncedAt ? `Last synced ${lastSyncedAt}` : 'Not yet synced'}
+      </p>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+        <Button variant="secondary" onClick={onManualPush}>Sync now</Button>
+        <Button variant="danger" onClick={onStopSync}>Stop syncing this device</Button>
+      </div>
+    </Card>
+  );
+}
 
 function ExportImport() {
   const [message, setMessage] = useState('');
@@ -1418,7 +1462,7 @@ function GlobalSearch({ notes, library, citations, questions, mediaJournal, synt
   );
 }
 
-export default function StudyHub() {
+function StudyHubContent({ syncPanelProps }) {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [thesis, saveThesis, thesisLoaded] = useStore('rr-phd-thesis', { statement: '', challenges: [], graceLog: [] });
   const [tasks, saveTasks] = useStore('rr-phd-tasks', SEED_SYLLABUS.map((t, i) => ({ ...t, id: i + 1 })));
@@ -1456,7 +1500,7 @@ export default function StudyHub() {
 
         {!thesisLoaded ? <p style={{ fontSize: 13, color: COLORS.sage }}>Loading your hub...</p> : (
           <div style={{ textAlign: 'center' }}>
-            {activeTab === 'dashboard' && <Dashboard thesis={thesis} tasks={tasks} questions={questions} checkpoints={checkpoints} cases={cases} mediaJournal={mediaJournal} synthesisLog={synthesisLog} setTab={setActiveTab} />}
+            {activeTab === 'dashboard' && <Dashboard thesis={thesis} tasks={tasks} questions={questions} checkpoints={checkpoints} cases={cases} mediaJournal={mediaJournal} synthesisLog={synthesisLog} setTab={setActiveTab} syncPanelProps={syncPanelProps} />}
             {activeTab === 'syllabus' && <Syllabus tasks={tasks} saveTasks={saveTasks} />}
             {activeTab === 'checkpoints' && <Checkpoints checkpoints={checkpoints} saveCheckpoints={saveCheckpoints} tasks={tasks} />}
             {activeTab === 'thesis' && <Thesis thesis={thesis} saveThesis={saveThesis} />}
@@ -1497,5 +1541,135 @@ export default function StudyHub() {
         )}
       </div>
     </div>
+  );
+}
+
+const SYNC_KEY_STORAGE = 'rr-study-hub-sync-key';
+const SYNC_PUSH_INTERVAL_MS = 4000;
+
+export default function StudyHub() {
+  const [syncKey, setSyncKey] = useState(() => localStorage.getItem(SYNC_KEY_STORAGE) || '');
+  const [hydrated, setHydrated] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('idle'); // idle | saving | saved | error
+  const [lastSyncedAt, setLastSyncedAt] = useState('');
+  const lastPushedSnapshot = React.useRef('');
+  const SYNC_URL = '/.netlify/functions/study-hub-sync';
+
+  // One-time hydration: if a sync key already exists on this device (a
+  // returning session), pull the cloud copy into localStorage BEFORE any
+  // tab content mounts, so every useStore hook's lazy initializer reads the
+  // fresh data on its very first render — no reload needed, no flash.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (syncKey) {
+        try {
+          const res = await fetch(`${SYNC_URL}?key=${encodeURIComponent(syncKey)}`);
+          const json = await res.json();
+          if (!cancelled && json.data) {
+            restoreAllHubData(json.data);
+            lastPushedSnapshot.current = JSON.stringify(json.data);
+          }
+        } catch (e) {
+          // cloud unreachable at startup — proceed with whatever's local; the
+          // push loop will retry once it comes back
+        }
+      }
+      if (!cancelled) setHydrated(true);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Push loop: every few seconds, compare the current local snapshot to the
+  // last one actually pushed — only sends a request when something changed,
+  // so idle periods don't spam the function. This is last-write-wins, same
+  // model as the Library Tracker's own sync — two devices editing at the
+  // exact same moment can overwrite each other; it does not merge changes.
+  useEffect(() => {
+    if (!syncKey || !hydrated) return;
+    const interval = setInterval(async () => {
+      const snapshot = JSON.stringify(getAllHubData());
+      if (snapshot === lastPushedSnapshot.current) return;
+      setSyncStatus('saving');
+      try {
+        await fetch(`${SYNC_URL}?key=${encodeURIComponent(syncKey)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: snapshot,
+        });
+        lastPushedSnapshot.current = snapshot;
+        setSyncStatus('saved');
+        setLastSyncedAt(new Date().toLocaleTimeString());
+      } catch (e) {
+        setSyncStatus('error');
+      }
+    }, SYNC_PUSH_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [syncKey, hydrated]);
+
+  const startSync = () => {
+    const key = Math.random().toString(36).slice(2, 6) + '-' + Math.random().toString(36).slice(2, 6);
+    localStorage.setItem(SYNC_KEY_STORAGE, key);
+    setSyncKey(key);
+  };
+
+  const joinSync = async (inputKey) => {
+    const trimmed = inputKey.trim();
+    if (!trimmed) return;
+    try {
+      const res = await fetch(`${SYNC_URL}?key=${encodeURIComponent(trimmed)}`);
+      const json = await res.json();
+      if (json.data) restoreAllHubData(json.data);
+      localStorage.setItem(SYNC_KEY_STORAGE, trimmed);
+      // a fresh load is the simplest correct way to get every already-mounted
+      // useStore hook to pick up the just-restored data — same pattern the
+      // Import Backup button already uses.
+      window.location.reload();
+    } catch (e) {
+      alert('Could not reach the sync server. Check the key and try again.');
+    }
+  };
+
+  const stopSync = () => {
+    if (!window.confirm('Stop syncing this device? Your data stays on this device but will no longer update from or push to the shared key.')) return;
+    localStorage.removeItem(SYNC_KEY_STORAGE);
+    setSyncKey('');
+  };
+
+  const manualPush = async () => {
+    if (!syncKey) return;
+    setSyncStatus('saving');
+    try {
+      const snapshot = JSON.stringify(getAllHubData());
+      await fetch(`${SYNC_URL}?key=${encodeURIComponent(syncKey)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: snapshot,
+      });
+      lastPushedSnapshot.current = snapshot;
+      setSyncStatus('saved');
+      setLastSyncedAt(new Date().toLocaleTimeString());
+    } catch (e) {
+      setSyncStatus('error');
+    }
+  };
+
+  if (!hydrated) {
+    return (
+      <div style={{ fontFamily: BODY_FONT, background: COLORS.cream, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <style>{FONT_IMPORT}</style>
+        <p style={{ fontSize: 13, color: COLORS.sage }}>Loading your hub...</p>
+      </div>
+    );
+  }
+
+  return (
+    <StudyHubContent
+      syncPanelProps={{
+        syncKey, syncStatus, lastSyncedAt,
+        onStartSync: startSync, onJoinSync: joinSync, onStopSync: stopSync, onManualPush: manualPush,
+      }}
+    />
   );
 }
