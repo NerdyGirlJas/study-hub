@@ -1069,7 +1069,7 @@ function DissertationRecommendations({ thesis, framework, mediaJournal, tbr, onA
       ];
       const contradictingMedia = mediaJournal.filter(m => m.stance === 'Contradicts' || m.stance === 'Complicates').map(m => `${m.title}: ${m.critique || m.summary}`);
 
-      const res = await fetch('/.netlify/functions/dissertation-recommendations', {
+      const res = await fetch('/api/dissertation-recommendations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ thesisStatement: thesis.statement, gaps, strengths, highRelevanceTitles, contradictingMedia }),
@@ -1829,7 +1829,7 @@ export default function StudyHub() {
   const [syncStatus, setSyncStatus] = useState('idle'); // idle | saving | saved | error
   const [lastSyncedAt, setLastSyncedAt] = useState('');
   const lastPushedSnapshot = React.useRef('');
-  const SYNC_URL = '/.netlify/functions/study-hub-sync';
+  const SYNC_URL = '/api/study-hub';
 
   // One-time hydration: if a sync key already exists on this device (a
   // returning session), pull the cloud copy into localStorage BEFORE any
