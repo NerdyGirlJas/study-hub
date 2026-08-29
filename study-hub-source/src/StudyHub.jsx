@@ -39,6 +39,7 @@ const TABS = [
   { id: 'cases', label: 'Case log' },
   { id: 'media', label: 'Dissertation media journal' },
   { id: 'tbr', label: 'Living TBR' },
+  { id: 'wordbank', label: 'Word Bank' },
   { id: 'recommendations', label: 'Recommendations' },
   { id: 'synthesis', label: 'Weekly synthesis' },
   { id: 'framework', label: 'Framework builder' },
@@ -276,12 +277,19 @@ function Badge({ children, color, textColor }) {
 
 // ---------------- DASHBOARD ----------------
 
-function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal, synthesisLog, setTab, syncPanelProps }) {
+function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal, synthesisLog, wordBank, setTab, syncPanelProps }) {
   const openQuestions = questions.filter(q => !q.answer).length;
   const totalHours = tasks.reduce((s, t) => s + (Number(t.hours) || 0), 0);
   const doneHours = tasks.filter(t => t.status === 'done').reduce((s, t) => s + (Number(t.hours) || 0), 0);
   const openCheckpoints = checkpoints.filter(c => !c.done).length;
   const contradicting = mediaJournal.filter(m => m.stance === 'Contradicts' || m.stance === 'Complicates').length;
+  const wordToRevisit = useMemo(() => {
+    const undefined_ = wordBank.filter(w => !w.definition);
+    const unpracticed = wordBank.filter(w => w.definition && !w.practiced);
+    const pool = undefined_.length ? undefined_ : unpracticed;
+    if (pool.length === 0) return null;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }, [wordBank]);
 
   return (
     <div>
@@ -307,6 +315,17 @@ function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal,
           <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{contradicting}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Complicate/contradict thesis</div></Card>
           <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{synthesisLog.length}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Weekly syntheses saved</div></Card>
         </div>
+      </Section>
+      <Section title="Word to revisit">
+        {wordToRevisit ? (
+          <Card>
+            <div style={{ fontFamily: DISPLAY_FONT, fontSize: 20, fontWeight: 600 }}>{wordToRevisit.word}</div>
+            {wordToRevisit.definition
+              ? <p style={{ fontSize: 13, marginTop: 6 }}>{wordToRevisit.definition}</p>
+              : <p style={{ fontSize: 13, marginTop: 6, color: COLORS.sage, fontStyle: 'italic' }}>Not yet defined — visit the Word Bank.</p>}
+            <div style={{ marginTop: 8 }}><Button variant="outline" onClick={() => setTab('wordbank')}>Open Word Bank</Button></div>
+          </Card>
+        ) : <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>No words logged yet.</p></Card>}
       </Section>
       <Section title="Sync across devices">
         <SyncPanel {...syncPanelProps} />
@@ -928,6 +947,247 @@ function SynthesisSlide({ format, headline, insights, application, weekLabel, sl
 
 const TBR_RELEVANCE = ['Y', 'Maybe', 'N'];
 const EMPTY_TBR = { title: '', author: '', subject: '', owned: false, relevance: 'Maybe', howSupports: '', priority: 3 };
+
+// ---------------- WORD BANK ----------------
+
+const EMPTY_WORD = { word: '', source: '', definition: '', synonyms: '', antonyms: '', practiced: false };
+
+function WordBankEntry({ entry, onUpdate, onRemove, onDraft }) {
+  const [draft, setDraft] = useState(entry);
+  const [drafting, setDrafting] = useState(false);
+  const [confidence, setConfidence] = useState(null);
+  const [draftError, setDraftError] = useState('');
+
+  // Without this, an edit synced in from another device (or the bridge
+  // importing a fresh word) would never show here — this component is
+  // keyed by entry.id, so React reuses the same instance and its local
+  // state otherwise never re-initializes from a changed prop.
+  useEffect(() => { setDraft(entry); }, [entry]);
+
+  const save = (patch) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    onUpdate(next);
+  };
+
+  const runDraft = async () => {
+    setDrafting(true);
+    setDraftError('');
+    const result = await onDraft(entry.word, entry.source);
+    if (result && !result.error) {
+      save({
+        definition: result.definition,
+        synonyms: (result.synonyms || []).join(', '),
+        antonyms: (result.antonyms || []).join(', '),
+      });
+      setConfidence(result.confidence);
+    } else {
+      setDraftError('Could not draft a definition right now — try again in a moment.');
+    }
+    setDrafting(false);
+  };
+
+  return (
+    <Card style={{ textAlign: 'left' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <div style={{ fontFamily: DISPLAY_FONT, fontSize: 18, fontWeight: 600 }}>{entry.word}</div>
+          {entry.source && <div style={{ fontSize: 11, color: COLORS.sage }}>from {entry.source}</div>}
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: COLORS.sage, cursor: 'pointer' }}>
+          <input type="checkbox" checked={draft.practiced} onChange={e => save({ practiced: e.target.checked })} />
+          Used it
+        </label>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <TextArea placeholder="Definition" value={draft.definition} onChange={e => save({ definition: e.target.value })} style={{ marginBottom: 6, minHeight: 50 }} />
+        <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+          <TextInput placeholder="Synonyms, comma separated" value={draft.synonyms} onChange={e => save({ synonyms: e.target.value })} />
+          <TextInput placeholder="Antonyms, comma separated" value={draft.antonyms} onChange={e => save({ antonyms: e.target.value })} />
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <Button variant="secondary" onClick={runDraft} disabled={drafting}>{drafting ? 'Drafting...' : 'AI draft'}</Button>
+          <Button variant="danger" onClick={onRemove}>Remove</Button>
+          {confidence && (
+            <span style={{ fontSize: 11, color: confidence === 'low' ? '#a0524a' : COLORS.sage }}>
+              {confidence === 'low' ? 'Low confidence — double-check this one' : `${confidence} confidence`}
+            </span>
+          )}
+        </div>
+        {draftError && <p style={{ fontSize: 12, color: '#a0524a', marginTop: 6 }}>{draftError}</p>}
+      </div>
+    </Card>
+  );
+}
+
+function WordBankBridgeImport({ bridge, saveBridge, onImportWord, onGoToMediaJournal }) {
+  const [pending, setPending] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const fetchPending = async () => {
+    if (!bridge.libraryKey) { setError('missing_key'); return; }
+    setLoading(true); setError('');
+    try {
+      const res = await fetch(`${bridge.siteUrl.replace(/\/$/, '')}/api/library?key=${encodeURIComponent(bridge.libraryKey)}`);
+      const json = await res.json();
+      const dailyLogs = (json.data && json.data.dailyLogs) || [];
+      const importedWordIds = bridge.importedWordIds || [];
+      const items = [];
+      dailyLogs.forEach(log => {
+        (log.words || []).forEach((word, idx) => {
+          const id = `word-${log.id}-${idx}`;
+          if (!importedWordIds.includes(id)) items.push({ id, word, source: log.title });
+        });
+      });
+      setPending(items);
+    } catch (e) {
+      setError('Could not reach your Library Tracker.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const markHandled = (id) => {
+    saveBridge({ ...bridge, importedWordIds: [...(bridge.importedWordIds || []), id] });
+    setPending(prev => prev.filter(p => p.id !== id));
+  };
+
+  const importWord = (item) => {
+    onImportWord(item.word, item.source);
+    markHandled(item.id);
+  };
+
+  return (
+    <Section title="Pull in words from your Daily Reading Log">
+      <Card style={{ textAlign: 'left' }}>
+        <p style={{ margin: '0 0 10px', fontSize: 12, color: COLORS.sage }}>
+          Words logged during any lane of daily reading — Pleasure, Dissertation, or Business — show up here.
+        </p>
+        <Button onClick={fetchPending} disabled={loading}>{loading ? 'Checking...' : 'Check for new words'}</Button>
+        {error === 'missing_key' && (
+          <p style={{ fontSize: 12, color: '#a0524a', marginTop: 8 }}>
+            Connect your Library Tracker key first —{' '}
+            <button onClick={onGoToMediaJournal} style={{ border: 'none', background: 'none', color: COLORS.azure, textDecoration: 'underline', cursor: 'pointer', padding: 0, fontSize: 12 }}>
+              go to Dissertation Media Journal
+            </button>.
+          </p>
+        )}
+        {error && error !== 'missing_key' && <p style={{ fontSize: 12, color: '#a0524a', marginTop: 8 }}>{error}</p>}
+      </Card>
+      {pending.map(item => (
+        <Card key={item.id} style={{ textAlign: 'left' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>{item.word}</div>
+              <div style={{ fontSize: 11, color: COLORS.sage }}>from {item.source}</div>
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <Button onClick={() => importWord(item)}>Add</Button>
+              <Button variant="secondary" onClick={() => markHandled(item.id)}>Skip</Button>
+            </div>
+          </div>
+        </Card>
+      ))}
+    </Section>
+  );
+}
+
+function WordBank({ words, saveWords, bridge, saveBridge, onGoToMediaJournal }) {
+  const [form, setForm] = useState(EMPTY_WORD);
+  const [filter, setFilter] = useState('all'); // all | undefined | unpracticed
+
+  const addWord = () => {
+    if (!form.word.trim()) return;
+    saveWords([{ ...form, id: Date.now(), date: new Date().toLocaleDateString() }, ...words]);
+    setForm(EMPTY_WORD);
+  };
+  const updateWord = (id, patch) => saveWords(words.map(w => w.id === id ? { ...w, ...patch } : w));
+  const removeWord = (id) => { if (window.confirm('Remove this word permanently?')) saveWords(words.filter(w => w.id !== id)); };
+
+  const draftDefinition = async (word, source) => {
+    try {
+      const res = await fetch('/api/word-lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ word, context: source }),
+      });
+      return await res.json();
+    } catch (e) {
+      return { error: true };
+    }
+  };
+
+  const revisitWord = useMemo(() => {
+    const undefined_ = words.filter(w => !w.definition);
+    const unpracticed = words.filter(w => w.definition && !w.practiced);
+    const pool = undefined_.length ? undefined_ : unpracticed;
+    if (pool.length === 0) return null;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }, [words]);
+
+  const filtered = words.filter(w => {
+    if (filter === 'undefined') return !w.definition;
+    if (filter === 'unpracticed') return w.definition && !w.practiced;
+    return true;
+  });
+
+  return (
+    <div>
+      <Section title="Word Bank">
+        <Card>
+          <p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>
+            Every word you underlined and never came back to — now with somewhere to actually come back to.
+          </p>
+        </Card>
+      </Section>
+
+      <WordBankBridgeImport
+        bridge={bridge} saveBridge={saveBridge}
+        onImportWord={(word, source) => saveWords([{ ...EMPTY_WORD, word, source, id: Date.now(), date: new Date().toLocaleDateString() }, ...words])}
+        onGoToMediaJournal={onGoToMediaJournal}
+      />
+
+      {revisitWord && (
+        <Section title="Revisit">
+          <Card>
+            <div style={{ fontFamily: DISPLAY_FONT, fontSize: 20, fontWeight: 600 }}>{revisitWord.word}</div>
+            {revisitWord.definition
+              ? <p style={{ fontSize: 13, marginTop: 6 }}>{revisitWord.definition}</p>
+              : <p style={{ fontSize: 13, marginTop: 6, color: COLORS.sage, fontStyle: 'italic' }}>No definition yet — scroll down to add one.</p>}
+          </Card>
+        </Section>
+      )}
+
+      <Section title="Add a word">
+        <Card style={{ textAlign: 'left' }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <TextInput placeholder="Word" value={form.word} onChange={e => setForm({ ...form, word: e.target.value })} style={{ flex: 1 }} />
+            <TextInput placeholder="Source (book/article)" value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} style={{ flex: 1 }} />
+          </div>
+          <Button onClick={addWord}>Add to Word Bank</Button>
+        </Card>
+      </Section>
+
+      <Section title="Filter">
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+          <Select value={filter} onChange={e => setFilter(e.target.value)}>
+            <option value="all">All words</option>
+            <option value="undefined">Not yet defined</option>
+            <option value="unpracticed">Defined but not used yet</option>
+          </Select>
+        </div>
+      </Section>
+
+      <Section title={`Words (${filtered.length})`}>
+        {filtered.map(w => (
+          <WordBankEntry key={w.id} entry={w} onUpdate={(patch) => updateWord(w.id, patch)} onRemove={() => removeWord(w.id)} onDraft={draftDefinition} />
+        ))}
+        {filtered.length === 0 && <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>Nothing here yet.</p></Card>}
+      </Section>
+    </div>
+  );
+}
 
 function LivingTBR({ items, saveItems, onPromoteToMedia }) {
   const [form, setForm] = useState(EMPTY_TBR);
@@ -1563,19 +1823,126 @@ function Library({ items, saveItems }) {
 
 // ---------------- CITATIONS ----------------
 
-function Citations({ citations, saveCitations }) {
-  const [form, setForm] = useState({ author: '', year: '', title: '', source: '', claim: '', evidenceType: 'RCT' });
+const CONFIDENCE_OPTIONS = [
+  { value: 'confirmed', label: 'Confirmed' },
+  { value: 'in-progress', label: 'In Progress' },
+  { value: 'working-thread', label: 'Working Thread' },
+  { value: 'oral-history', label: 'Family Oral History' },
+];
+const SOURCE_TYPE_OPTIONS = [
+  { value: 'study', label: 'Study / article' },
+  { value: 'book', label: 'Book' },
+  { value: 'personal-note', label: 'Personal note / synthesis' },
+  { value: 'oral', label: 'Oral history' },
+];
+
+function slugifyForCallNumber(drawer, title, existingIds) {
+  const drawerAbbrev = (drawer || 'GEN').replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'GEN';
+  const titleAbbrev = (title || 'XXX').replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'XXX';
+  let n = 1;
+  let candidate = `${drawerAbbrev}-${titleAbbrev}-${String(n).padStart(2, '0')}`;
+  while (existingIds.has(candidate)) {
+    n += 1;
+    candidate = `${drawerAbbrev}-${titleAbbrev}-${String(n).padStart(2, '0')}`;
+  }
+  return candidate;
+}
+
+function buildCatalogEntries(citations) {
+  const ready = citations.filter(c => c.catalogReady);
+  const usedIds = new Set();
+  const duplicatesFound = [];
+  const entries = ready.map(c => {
+    let id = (c.catalogCallNumber || '').trim();
+    if (!id) {
+      id = slugifyForCallNumber(c.catalogDrawer, c.title, usedIds);
+    } else if (usedIds.has(id)) {
+      duplicatesFound.push(id);
+      let n = 2;
+      let candidate = `${id}-${n}`;
+      while (usedIds.has(candidate)) { n += 1; candidate = `${id}-${n}`; }
+      id = candidate;
+    }
+    usedIds.add(id);
+
+    const seeAlso = (c.catalogSeeAlso || '').split(',').map(s => s.trim()).filter(Boolean);
+    const sourceCitation = `${c.author || ''}${c.year ? ` (${c.year})` : ''}. ${c.title}. ${c.source || ''}.`.trim();
+
+    const entry = {
+      id,
+      drawer: c.catalogDrawer || 'Uncategorized',
+      title: c.title,
+      subtitle: `${c.author || ''}${c.year ? ` (${c.year})` : ''}`.trim(),
+      hook: c.catalogHook || c.claim || '',
+      note: c.claim || '',
+      sourceType: c.catalogSourceType || 'study',
+      sourceCitation,
+      confidence: c.catalogConfidence || 'confirmed',
+      seeAlso,
+      dateAdded: new Date(c.id).toISOString().slice(0, 10),
+    };
+    if (c.catalogSourceType === 'book') {
+      entry.coverTitle = c.title;
+      entry.coverAuthor = c.author || '';
+      if (c.catalogCoverIsbn && c.catalogCoverIsbn.trim()) {
+        entry.coverIsbn = c.catalogCoverIsbn.trim();
+      }
+    }
+    return entry;
+  });
+  return { entries, duplicatesFound };
+}
+
+function downloadJson(filename, dataObj) {
+  const blob = new Blob([JSON.stringify(dataObj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function Citations({ citations, saveCitations, catalogDuplicates = [] }) {
+  const [form, setForm] = useState({
+    author: '', year: '', title: '', source: '', claim: '', evidenceType: 'RCT',
+    catalogReady: false, catalogDrawer: '', catalogSourceType: 'study',
+    catalogConfidence: 'confirmed', catalogHook: '', catalogCoverIsbn: '', catalogSeeAlso: '', catalogCallNumber: '',
+  });
   const [search, setSearch] = useState('');
   const evidenceTypes = ['RCT', 'Cohort study', 'Case series', 'In-vitro', 'Systematic review', 'Traditional use', 'Other'];
 
   const addCitation = () => {
     if (!form.title.trim()) return;
     saveCitations([{ ...form, id: Date.now() }, ...citations]);
-    setForm({ author: '', year: '', title: '', source: '', claim: '', evidenceType: form.evidenceType });
+    setForm({
+      author: '', year: '', title: '', source: '', claim: '', evidenceType: form.evidenceType,
+      catalogReady: false, catalogDrawer: form.catalogDrawer, catalogSourceType: form.catalogSourceType,
+      catalogConfidence: 'confirmed', catalogHook: '', catalogCoverIsbn: '', catalogSeeAlso: '', catalogCallNumber: '',
+    });
   };
   const removeCitation = (id) => { if (window.confirm('Delete this citation permanently?')) saveCitations(citations.filter(c => c.id !== id)); };
+  const updateCitation = (id, patch) => saveCitations(citations.map(c => c.id === id ? { ...c, ...patch } : c));
   const filtered = citations.filter(c => !search.trim() || [c.author, c.title, c.claim, c.source].join(' ').toLowerCase().includes(search.toLowerCase()));
   const copyCitation = (c) => navigator.clipboard?.writeText(`${c.author}${c.year ? ` (${c.year})` : ''}. ${c.title}. ${c.source}.`);
+
+  const downloadBackup = () => {
+    const { entries, duplicatesFound } = buildCatalogEntries(citations);
+    if (entries.length === 0) {
+      alert('No citations are flagged "Catalog-ready" yet. Check that box on any citation you want to appear in the Dissertation Catalog.');
+      return;
+    }
+    if (duplicatesFound.length > 0) {
+      alert(`Heads up: ${duplicatesFound.length} duplicate call number(s) were auto-renamed so nothing was dropped: ${duplicatesFound.join(', ')}.`);
+    }
+    downloadJson('catalog-data.json', {
+      generatedAt: new Date().toISOString(),
+      source: 'Formation Study Hub — Citation bank export',
+      entries,
+    });
+  };
 
   return (
     <div>
@@ -1592,19 +1959,87 @@ function Citations({ citations, saveCitations }) {
               <Select value={form.evidenceType} onChange={e => setForm({ ...form, evidenceType: e.target.value })}>{evidenceTypes.map(t => <option key={t} value={t}>{t}</option>)}</Select>
             </div>
             <TextArea placeholder="What claim does this support?" value={form.claim} onChange={e => setForm({ ...form, claim: e.target.value })} />
+
+            <Collapsible title="Catalog display (optional)" defaultOpen={false}>
+              <div style={{ display: 'grid', gap: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontFamily: BODY_FONT, justifyContent: 'center' }}>
+                  <input type="checkbox" checked={form.catalogReady} onChange={e => setForm({ ...form, catalogReady: e.target.checked })} />
+                  Catalog-ready — flows into the Dissertation Catalog automatically
+                </label>
+                <TextInput placeholder="Call number (optional — auto-generated if left blank)" value={form.catalogCallNumber} onChange={e => setForm({ ...form, catalogCallNumber: e.target.value })} />
+                <TextInput placeholder="Drawer / category (e.g. Literature Review)" value={form.catalogDrawer} onChange={e => setForm({ ...form, catalogDrawer: e.target.value })} />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Select value={form.catalogSourceType} onChange={e => setForm({ ...form, catalogSourceType: e.target.value })} style={{ flex: 1 }}>
+                    {SOURCE_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </Select>
+                  <Select value={form.catalogConfidence} onChange={e => setForm({ ...form, catalogConfidence: e.target.value })} style={{ flex: 1 }}>
+                    {CONFIDENCE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </Select>
+                </div>
+                {form.catalogSourceType === 'book' && (
+                  <TextInput placeholder="ISBN (optional — pulls real cover art via Open Library)" value={form.catalogCoverIsbn} onChange={e => setForm({ ...form, catalogCoverIsbn: e.target.value })} />
+                )}
+                <TextArea placeholder="Hook — one enticing sentence for the card front" value={form.catalogHook} onChange={e => setForm({ ...form, catalogHook: e.target.value })} style={{ minHeight: 50 }} />
+                <TextInput placeholder="See Also — comma-separated, e.g. Literature Review → Hoffmann on Adaptogens" value={form.catalogSeeAlso} onChange={e => setForm({ ...form, catalogSeeAlso: e.target.value })} />
+              </div>
+            </Collapsible>
+
             <Button onClick={addCitation}>Add to bank</Button>
           </div>
         </Card>
       </Section>
-      <Section title={`Citation bank (${citations.length})`} right={<TextInput placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} style={{ width: 160 }} />}>
+      <Section
+        title={`Citation bank (${citations.length})`}
+        right={
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <TextInput placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} style={{ width: 160 }} />
+            <Button variant="outline" onClick={downloadBackup}>Download backup</Button>
+          </div>
+        }
+      >
+        <div style={{ fontSize: 11, color: COLORS.sage, marginBottom: 10, fontFamily: BODY_FONT }}>
+          Any citation flagged "Catalog-ready" below pushes to the Dissertation Catalog automatically — no export or redeploy needed. "Download backup" is just a manual local copy if you ever want one.
+        </div>
+        {catalogDuplicates.length > 0 && (
+          <div style={{ fontSize: 12, color: '#a0524a', background: '#fbeceb', border: '1px solid #e3b3b3', borderRadius: 9, padding: '8px 12px', marginBottom: 10 }}>
+            Heads up: {catalogDuplicates.length} duplicate Call Number{catalogDuplicates.length === 1 ? '' : 's'} found among catalog-ready citations ({catalogDuplicates.join(', ')}). Nothing was dropped — duplicates were auto-renamed in the export — but giving these their own Call Number will keep things tidy.
+          </div>
+        )}
         {filtered.map(c => (
           <Card key={c.id}>
             <Badge color={COLORS.lavender}>{c.evidenceType}</Badge>
+            {c.catalogReady && <Badge color={COLORS.azure} textColor="#fff">Catalog-ready{c.catalogDrawer ? `: ${c.catalogDrawer}` : ''}</Badge>}
             {c.provenance && <Badge color={COLORS.azure} textColor="#fff">{c.provenance}: {c.provenanceTitle}</Badge>}
             <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>{c.author}{c.year ? ` (${c.year})` : ''}</div>
             <div style={{ fontSize: 13 }}>{c.title}</div>
             <div style={{ fontSize: 12, color: COLORS.sage }}>{c.source}</div>
             {c.claim && <div style={{ fontSize: 12, marginTop: 4, color: COLORS.ink }}>Supports: {c.claim}</div>}
+
+            <div style={{ marginTop: 10, borderTop: `1px solid ${COLORS.lavenderLight}`, paddingTop: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontFamily: BODY_FONT, justifyContent: 'center' }}>
+                <input type="checkbox" checked={!!c.catalogReady} onChange={e => updateCitation(c.id, { catalogReady: e.target.checked, catalogDrawer: c.catalogDrawer || '', catalogSourceType: c.catalogSourceType || 'study', catalogConfidence: c.catalogConfidence || 'confirmed' })} />
+                Catalog-ready
+              </label>
+              {c.catalogReady && (
+                <div style={{ display: 'grid', gap: 6, marginTop: 8, textAlign: 'left' }}>
+                  <TextInput placeholder="Drawer / category" value={c.catalogDrawer || ''} onChange={e => updateCitation(c.id, { catalogDrawer: e.target.value })} />
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <Select value={c.catalogSourceType || 'study'} onChange={e => updateCitation(c.id, { catalogSourceType: e.target.value })} style={{ flex: 1 }}>
+                      {SOURCE_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </Select>
+                    <Select value={c.catalogConfidence || 'confirmed'} onChange={e => updateCitation(c.id, { catalogConfidence: e.target.value })} style={{ flex: 1 }}>
+                      {CONFIDENCE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </Select>
+                  </div>
+                  {c.catalogSourceType === 'book' && (
+                    <TextInput placeholder="ISBN (optional, real cover art)" value={c.catalogCoverIsbn || ''} onChange={e => updateCitation(c.id, { catalogCoverIsbn: e.target.value })} />
+                  )}
+                  <TextArea placeholder="Hook sentence" value={c.catalogHook || ''} onChange={e => updateCitation(c.id, { catalogHook: e.target.value })} style={{ minHeight: 44 }} />
+                  <TextInput placeholder="See Also (comma-separated)" value={c.catalogSeeAlso || ''} onChange={e => updateCitation(c.id, { catalogSeeAlso: e.target.value })} />
+                </div>
+              )}
+            </div>
+
             <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginTop: 8 }}>
               <Button variant="secondary" onClick={() => copyCitation(c)}>Copy</Button>
               <Button variant="danger" onClick={() => removeCitation(c.id)}>Remove</Button>
@@ -1678,7 +2113,7 @@ function Questions({ questions, saveQuestions }) {
 
 // ---------------- APP ----------------
 
-function GlobalSearch({ notes, library, citations, questions, mediaJournal, synthesisLog, tbr, setTab }) {
+function GlobalSearch({ notes, library, citations, questions, mediaJournal, synthesisLog, tbr, wordBank, setTab }) {
   const [q, setQ] = useState('');
   const results = useMemo(() => {
     if (!q.trim()) return [];
@@ -1691,8 +2126,9 @@ function GlobalSearch({ notes, library, citations, questions, mediaJournal, synt
     mediaJournal.forEach(m => { if ((m.title + m.creator + m.summary + m.critique).toLowerCase().includes(term)) out.push({ type: 'Media journal', label: m.title, tab: 'media' }); });
     synthesisLog.forEach(s => { if ((s.headline + (s.insights || []).join(' ')).toLowerCase().includes(term)) out.push({ type: 'Synthesis', label: s.headline, tab: 'synthesis' }); });
     tbr.forEach(t => { if ((t.title + t.author + t.subject).toLowerCase().includes(term)) out.push({ type: 'TBR', label: t.title, tab: 'tbr' }); });
+    wordBank.forEach(w => { if ((w.word + w.definition + w.source).toLowerCase().includes(term)) out.push({ type: 'Word Bank', label: w.word, tab: 'wordbank' }); });
     return out.slice(0, 8);
-  }, [q, notes, library, citations, questions, mediaJournal, synthesisLog, tbr]);
+  }, [q, notes, library, citations, questions, mediaJournal, synthesisLog, tbr, wordBank]);
 
   return (
     <div style={{ marginBottom: 20, position: 'relative' }}>
@@ -1722,12 +2158,49 @@ function StudyHubContent({ syncPanelProps }) {
   const [notes, saveNotes] = useStore('rr-phd-notes', []);
   const [library, saveLibrary] = useStore('rr-phd-library', []);
   const [citations, saveCitations] = useStore('rr-phd-citations', []);
+  const CATALOG_SYNC_KEY = 'dissertation-catalog-export';
+  const lastPushedCatalog = React.useRef('');
+  const [catalogDuplicates, setCatalogDuplicates] = useState([]);
+
+  // Auto-push: every few seconds, check whether the catalog-ready entries
+  // actually changed and only then push to the same live blob backend the
+  // cross-device sync uses. Interval-based (not a per-render effect) on
+  // purpose — typing in a Hook or Drawer field updates `citations` on every
+  // keystroke, and an effect keyed on [citations] would fire a network
+  // request per keystroke. Polling and diffing avoids that entirely.
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const { entries, duplicatesFound } = buildCatalogEntries(citations);
+      setCatalogDuplicates(duplicatesFound);
+      const snapshot = JSON.stringify(entries);
+      if (snapshot === lastPushedCatalog.current) return;
+      try {
+        await fetch(`/api/study-hub?key=${encodeURIComponent(CATALOG_SYNC_KEY)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            generatedAt: new Date().toISOString(),
+            source: 'Formation Study Hub — auto-sync',
+            entries,
+          }),
+        });
+        lastPushedCatalog.current = snapshot;
+      } catch (e) {
+        // catalog push failed silently — citation data itself is unaffected;
+        // it will retry on the next interval tick
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [citations]);
+
   const [questions, saveQuestions] = useStore('rr-phd-questions', []);
   const [framework, saveFramework] = useStore('rr-phd-framework', { entries: [] });
   const [challengeLog, saveChallengeLog] = useStore('rr-phd-challenges', []);
   const [cases, saveCases] = useStore('rr-phd-cases', []);
   const [mediaJournal, saveMediaJournal] = useStore('rr-phd-media-journal', []);
   const [tbr, saveTbr] = useStore('rr-phd-tbr', []);
+  const [wordBank, saveWordBank] = useStore('rr-phd-wordbank', []);
   const [mediaDraftSeed, setMediaDraftSeed] = useState(null);
   const [synthesisLog, saveSynthesisLog] = useStore('rr-phd-synthesis', []);
   const [bridge, saveBridge] = useStore('rr-phd-library-bridge', { siteUrl: 'https://root-restore-library-tracker.netlify.app', libraryKey: '', importedIds: [] });
@@ -1760,11 +2233,11 @@ function StudyHubContent({ syncPanelProps }) {
           ))}
         </div>
 
-        <GlobalSearch notes={notes} library={library} citations={citations} questions={questions} mediaJournal={mediaJournal} synthesisLog={synthesisLog} tbr={tbr} setTab={setActiveTab} />
+        <GlobalSearch notes={notes} library={library} citations={citations} questions={questions} mediaJournal={mediaJournal} synthesisLog={synthesisLog} tbr={tbr} wordBank={wordBank} setTab={setActiveTab} />
 
         {!thesisLoaded ? <p style={{ fontSize: 13, color: COLORS.sage }}>Loading your hub...</p> : (
           <div style={{ textAlign: 'center' }}>
-            {activeTab === 'dashboard' && <Dashboard thesis={thesis} tasks={tasks} questions={questions} checkpoints={checkpoints} cases={cases} mediaJournal={mediaJournal} synthesisLog={synthesisLog} setTab={setActiveTab} syncPanelProps={syncPanelProps} />}
+            {activeTab === 'dashboard' && <Dashboard thesis={thesis} tasks={tasks} questions={questions} checkpoints={checkpoints} cases={cases} mediaJournal={mediaJournal} synthesisLog={synthesisLog} wordBank={wordBank} setTab={setActiveTab} syncPanelProps={syncPanelProps} />}
             {activeTab === 'syllabus' && <Syllabus tasks={tasks} saveTasks={saveTasks} />}
             {activeTab === 'checkpoints' && <Checkpoints checkpoints={checkpoints} saveCheckpoints={saveCheckpoints} tasks={tasks} />}
             {activeTab === 'thesis' && <Thesis thesis={thesis} saveThesis={saveThesis} />}
@@ -1776,6 +2249,7 @@ function StudyHubContent({ syncPanelProps }) {
                 setActiveTab('media');
               }}
             />}
+            {activeTab === 'wordbank' && <WordBank words={wordBank} saveWords={saveWordBank} bridge={bridge} saveBridge={saveBridge} onGoToMediaJournal={() => setActiveTab('media')} />}
             {activeTab === 'media' && <DissertationMedia
               entries={mediaJournal} saveEntries={saveMediaJournal}
               bridge={bridge} saveBridge={saveBridge}
@@ -1811,7 +2285,7 @@ function StudyHubContent({ syncPanelProps }) {
             {activeTab === 'challenge' && <ChallengeMe log={challengeLog} saveLog={saveChallengeLog} thesis={thesis} framework={framework} />}
             {activeTab === 'notes' && <Notes notes={notes} saveNotes={saveNotes} />}
             {activeTab === 'library' && <Library items={library} saveItems={saveLibrary} />}
-            {activeTab === 'citations' && <Citations citations={citations} saveCitations={saveCitations} />}
+            {activeTab === 'citations' && <Citations citations={citations} saveCitations={saveCitations} catalogDuplicates={catalogDuplicates} />}
             {activeTab === 'questions' && <Questions questions={questions} saveQuestions={saveQuestions} />}
           </div>
         )}
