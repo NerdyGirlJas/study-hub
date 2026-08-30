@@ -40,6 +40,7 @@ const TABS = [
   { id: 'media', label: 'Dissertation media journal' },
   { id: 'tbr', label: 'Living TBR' },
   { id: 'wordbank', label: 'Word Bank' },
+  { id: 'foglog', label: 'Fog Log' },
   { id: 'recommendations', label: 'Recommendations' },
   { id: 'synthesis', label: 'Weekly synthesis' },
   { id: 'framework', label: 'Framework builder' },
@@ -183,6 +184,77 @@ function restoreAllHubData(data) {
   });
 }
 
+// ---------------- MERGE (combine two devices' data instead of overwriting) ----------------
+// Used when joining an existing sync key on a device that already has its
+// own data, so nothing typed on either device gets silently discarded.
+// Arrays of objects with an `id` field are unioned by id — this covers the
+// large majority of stores (citations, library, notes, cases, word bank,
+// fog log, etc.), since ids are creation timestamps and real collisions
+// across two independently-used devices are effectively impossible. Plain
+// objects (e.g. { statement: '...' } or { entries: [...] }) are merged key
+// by key, recursing into any nested arrays/objects. Scalar leaf values
+// (plain strings/numbers, e.g. a thesis statement) can't be blindly
+// combined — if both sides have a non-empty, DIFFERENT value, both are
+// kept and logged as a conflict for the user to resolve by hand, rather
+// than the merge quietly guessing which one was "right."
+function mergeValues(path, a, b, conflicts) {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  if (JSON.stringify(a) === JSON.stringify(b)) return a;
+
+  if (Array.isArray(a) && Array.isArray(b)) {
+    const byId = new Map();
+    const noId = [];
+    [...a, ...b].forEach(item => {
+      if (item && typeof item === 'object' && 'id' in item) {
+        // on a genuine id collision, keep whichever object has more filled-in
+        // fields, as a simple "more complete" heuristic — logged either way.
+        if (byId.has(item.id)) {
+          const existing = byId.get(item.id);
+          if (JSON.stringify(existing) !== JSON.stringify(item)) {
+            conflicts.push(`${path}: two different entries shared id ${item.id} — kept the more detailed one`);
+          }
+          // "more detailed" = longer serialized content, a simple proxy for
+          // which version has more actually filled in. This case should be
+          // rare in practice (ids are creation timestamps; two independent
+          // devices producing the same id is effectively impossible), so
+          // this tiebreak mainly matters for the flagged-conflict path above.
+          byId.set(item.id, JSON.stringify(item).length > JSON.stringify(existing).length ? item : existing);
+        } else {
+          byId.set(item.id, item);
+        }
+      } else {
+        noId.push(item);
+      }
+    });
+    // de-dupe plain-value array entries (e.g. a bare array of strings)
+    const dedupedNoId = [...new Set(noId.map(v => JSON.stringify(v)))].map(v => JSON.parse(v));
+    return [...byId.values(), ...dedupedNoId];
+  }
+
+  if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
+    const merged = {};
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    keys.forEach(k => { merged[k] = mergeValues(`${path}.${k}`, a[k], b[k], conflicts); });
+    return merged;
+  }
+
+  // scalar mismatch (or array-vs-object type mismatch) — keep both, visibly
+  if ((typeof a === 'string' && !a.trim()) || a == null) return b;
+  if ((typeof b === 'string' && !b.trim()) || b == null) return a;
+  conflicts.push(`${path}: local and cloud had different values — kept the cloud version; check this field ("${String(a).slice(0, 60)}" vs "${String(b).slice(0, 60)}")`);
+  return b;
+}
+
+function mergeAllHubData(localData, cloudData) {
+  const conflicts = [];
+  const keys = new Set([...Object.keys(localData), ...Object.keys(cloudData)]);
+  const merged = {};
+  keys.forEach(k => { merged[k] = mergeValues(k, localData[k], cloudData[k], conflicts); });
+  return { merged, conflicts };
+}
+
+
 // ---------------- SHARED UI ----------------
 
 function SectionHeader({ children, right }) {
@@ -250,12 +322,12 @@ function Button({ children, onClick, variant = 'primary', style, type = 'button'
   return <button type={type} onClick={onClick} disabled={disabled} style={{ ...base, ...variants[variant], ...style }}>{children}</button>;
 }
 
-function TextInput(props) {
-  return <input {...props} style={{
+const TextInput = React.forwardRef(function TextInput(props, ref) {
+  return <input ref={ref} {...props} style={{
     width: '100%', padding: '9px 11px', borderRadius: 9, border: `1px solid ${COLORS.lavenderLight}`,
     fontSize: 13, fontFamily: BODY_FONT, boxSizing: 'border-box', textAlign: 'center', ...props.style,
   }} />;
-}
+});
 function TextArea(props) {
   return <textarea {...props} style={{
     width: '100%', padding: '9px 11px', borderRadius: 9, border: `1px solid ${COLORS.lavenderLight}`,
@@ -277,7 +349,7 @@ function Badge({ children, color, textColor }) {
 
 // ---------------- DASHBOARD ----------------
 
-function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal, synthesisLog, wordBank, setTab, syncPanelProps }) {
+function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal, synthesisLog, wordBank, fogLog, setTab, syncPanelProps }) {
   const openQuestions = questions.filter(q => !q.answer).length;
   const totalHours = tasks.reduce((s, t) => s + (Number(t.hours) || 0), 0);
   const doneHours = tasks.filter(t => t.status === 'done').reduce((s, t) => s + (Number(t.hours) || 0), 0);
@@ -290,6 +362,11 @@ function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal,
     if (pool.length === 0) return null;
     return pool[Math.floor(Math.random() * pool.length)];
   }, [wordBank]);
+  const foggyToRevisit = useMemo(() => {
+    const stillFoggy = fogLog.filter(f => f.status !== 'Explained it clean');
+    if (stillFoggy.length === 0) return null;
+    return stillFoggy[Math.floor(Math.random() * stillFoggy.length)];
+  }, [fogLog]);
 
   return (
     <div>
@@ -326,6 +403,18 @@ function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal,
             <div style={{ marginTop: 8 }}><Button variant="outline" onClick={() => setTab('wordbank')}>Open Word Bank</Button></div>
           </Card>
         ) : <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>No words logged yet.</p></Card>}
+      </Section>
+      <Section title="Something foggy to revisit">
+        {foggyToRevisit ? (
+          <Card>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontFamily: DISPLAY_FONT, fontSize: 20, fontWeight: 600 }}>{foggyToRevisit.concept}</div>
+              <span style={{ fontSize: 11, color: FOG_STATUS_COLORS[foggyToRevisit.status] || COLORS.sage }}>{foggyToRevisit.status}</span>
+            </div>
+            {foggyToRevisit.whatIsntClicking && <p style={{ fontSize: 13, marginTop: 6 }}>{foggyToRevisit.whatIsntClicking}</p>}
+            <div style={{ marginTop: 8 }}><Button variant="outline" onClick={() => setTab('foglog')}>Open Fog Log</Button></div>
+          </Card>
+        ) : <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>Nothing foggy logged right now.</p></Card>}
       </Section>
       <Section title="Sync across devices">
         <SyncPanel {...syncPanelProps} />
@@ -605,7 +694,7 @@ function CaseLog({ cases, saveCases }) {
 
 // ---------------- EXPORT / IMPORT ----------------
 
-function SyncPanel({ syncKey, syncStatus, lastSyncedAt, onStartSync, onJoinSync, onStopSync, onManualPush }) {
+function SyncPanel({ syncKey, syncStatus, lastSyncedAt, onStartSync, onJoinSync, onMergeSync, onStopSync, onManualPush }) {
   const [joinInput, setJoinInput] = useState('');
   const [showJoin, setShowJoin] = useState(false);
 
@@ -622,9 +711,17 @@ function SyncPanel({ syncKey, syncStatus, lastSyncedAt, onStartSync, onJoinSync,
             <Button variant="secondary" onClick={() => setShowJoin(true)}>I have a key already</Button>
           </div>
         ) : (
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+          <div style={{ display: 'grid', gap: 8, justifyItems: 'center' }}>
             <TextInput placeholder="Paste your sync key" value={joinInput} onChange={e => setJoinInput(e.target.value)} style={{ maxWidth: 220 }} />
-            <Button onClick={() => onJoinSync(joinInput)}>Join</Button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <Button onClick={() => onMergeSync(joinInput)}>Join &amp; merge (keep everything)</Button>
+              <Button variant="secondary" onClick={() => onJoinSync(joinInput)}>Join &amp; replace with cloud</Button>
+            </div>
+            <p style={{ fontSize: 11, color: COLORS.sage, maxWidth: 320, margin: 0 }}>
+              "Join &amp; merge" combines this device's data with the cloud copy — nothing on either side gets deleted.
+              "Join &amp; replace" is the old behavior — this device's local data is discarded in favor of the cloud copy.
+              Use merge unless you specifically want to wipe this device's local data.
+            </p>
           </div>
         )}
       </Card>
@@ -1184,6 +1281,231 @@ function WordBank({ words, saveWords, bridge, saveBridge, onGoToMediaJournal }) 
           <WordBankEntry key={w.id} entry={w} onUpdate={(patch) => updateWord(w.id, patch)} onRemove={() => removeWord(w.id)} onDraft={draftDefinition} />
         ))}
         {filtered.length === 0 && <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>Nothing here yet.</p></Card>}
+      </Section>
+    </div>
+  );
+}
+
+// ---------------- FOG LOG ----------------
+// Captures concepts/ideas/words that aren't sticking, so struggle becomes
+// visible and revisitable instead of silently forgotten. Three status
+// stages mirror the underlying 3-step method: Still foggy -> Getting
+// clearer -> Explained it clean. The "Explain it back" flow is the actual
+// Feynman mechanism: type your current explanation BEFORE seeing your last
+// one, so the comparison is honest rather than just re-reading old notes.
+
+const FOG_STATUSES = ['Still foggy', 'Getting clearer', 'Explained it clean'];
+const FOG_STATUS_COLORS = { 'Still foggy': '#a0524a', 'Getting clearer': COLORS.lavender, 'Explained it clean': COLORS.sage };
+const emptyFog = () => ({ concept: '', context: '', whatIsntClicking: '', seeAlso: '', status: 'Still foggy', explanations: [] });
+
+function FogLogEntry({ entry, onUpdate, onRemove, onCheck }) {
+  const [draft, setDraft] = useState(entry);
+  const [attempting, setAttempting] = useState(false);
+  const [pendingExplanation, setPendingExplanation] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState(null);
+  const [checkError, setCheckError] = useState('');
+
+  // Same fix as WordBankEntry — this component is keyed by entry.id, so
+  // without this, an update synced in from another device would never show.
+  useEffect(() => { setDraft(entry); }, [entry]);
+
+  const save = (patch) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    onUpdate(next);
+  };
+
+  const lastExplanation = draft.explanations && draft.explanations.length
+    ? draft.explanations[draft.explanations.length - 1]
+    : null;
+
+  const startAttempt = () => {
+    setPendingExplanation('');
+    setCheckResult(null);
+    setCheckError('');
+    setAttempting(true);
+  };
+
+  const submitAttempt = () => {
+    if (!pendingExplanation.trim()) return;
+    const nextExplanations = [...(draft.explanations || []), { text: pendingExplanation.trim(), date: new Date().toISOString() }];
+    save({ explanations: nextExplanations });
+    setAttempting(false);
+  };
+
+  const runCheck = async () => {
+    if (!pendingExplanation.trim()) return;
+    setChecking(true);
+    setCheckError('');
+    const result = await onCheck(draft.concept, pendingExplanation.trim());
+    if (result && !result.error) {
+      setCheckResult(result);
+    } else {
+      setCheckError('Could not get a check right now — try again in a moment.');
+    }
+    setChecking(false);
+  };
+
+  const runCheckOnLast = async () => {
+    if (!lastExplanation) return;
+    setChecking(true);
+    setCheckError('');
+    setCheckResult(null);
+    const result = await onCheck(draft.concept, lastExplanation.text);
+    if (result && !result.error) {
+      setCheckResult(result);
+    } else {
+      setCheckError('Could not get a check right now — try again in a moment.');
+    }
+    setChecking(false);
+  };
+
+  return (
+    <Card style={{ textAlign: 'left' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <div style={{ fontFamily: DISPLAY_FONT, fontSize: 18, fontWeight: 600 }}>{entry.concept}</div>
+          {entry.context && <div style={{ fontSize: 11, color: COLORS.sage }}>from {entry.context}</div>}
+        </div>
+        <Select value={draft.status} onChange={e => save({ status: e.target.value })} style={{ width: 160 }}>
+          {FOG_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+        </Select>
+      </div>
+
+      {draft.whatIsntClicking && (
+        <p style={{ fontSize: 13, marginTop: 8, color: COLORS.ink }}>{draft.whatIsntClicking}</p>
+      )}
+
+      <div style={{ marginTop: 10, borderTop: `1px solid ${COLORS.lavenderLight}`, paddingTop: 10 }}>
+        <div style={{ fontSize: 12, color: COLORS.sage, marginBottom: 6 }}>
+          {draft.explanations && draft.explanations.length > 0
+            ? `${draft.explanations.length} explanation attempt${draft.explanations.length === 1 ? '' : 's'} logged`
+            : 'No explanation attempts yet'}
+        </div>
+
+        {!attempting && (
+          <Button variant="secondary" onClick={startAttempt}>
+            {lastExplanation ? 'Explain it again' : 'Explain it back'}
+          </Button>
+        )}
+
+        {attempting && (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <TextArea
+              placeholder="Explain this in your own words — you'll see your last attempt after you submit, not before."
+              value={pendingExplanation}
+              onChange={e => setPendingExplanation(e.target.value)}
+              style={{ minHeight: 70 }}
+            />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <Button onClick={submitAttempt} disabled={!pendingExplanation.trim()}>Save this attempt</Button>
+              <Button variant="secondary" onClick={runCheck} disabled={checking || !pendingExplanation.trim()}>
+                {checking ? 'Checking...' : 'AI gut-check'}
+              </Button>
+              <Button variant="danger" onClick={() => setAttempting(false)}>Cancel</Button>
+            </div>
+            {checkResult && (
+              <div style={{ fontSize: 12, background: COLORS.lavenderLight, borderRadius: 9, padding: '8px 12px' }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  Peer check {checkResult.confidence === 'low' && '(low confidence — double-check this one yourself)'}
+                </div>
+                {checkResult.feedback}
+              </div>
+            )}
+            {checkError && <p style={{ fontSize: 12, color: '#a0524a' }}>{checkError}</p>}
+          </div>
+        )}
+
+        {!attempting && lastExplanation && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 12, color: COLORS.ink, fontStyle: 'italic' }}>
+              Last attempt ({new Date(lastExplanation.date).toLocaleDateString()}): {lastExplanation.text}
+            </div>
+            <div style={{ marginTop: 6, display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'center' }}>
+              <Button variant="secondary" onClick={runCheckOnLast} disabled={checking}>
+                {checking ? 'Checking...' : 'Gut-check last attempt'}
+              </Button>
+            </div>
+            {checkResult && (
+              <div style={{ fontSize: 12, background: COLORS.lavenderLight, borderRadius: 9, padding: '8px 12px', marginTop: 6 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  Peer check {checkResult.confidence === 'low' && '(low confidence — double-check this one yourself)'}
+                </div>
+                {checkResult.feedback}
+              </div>
+            )}
+            {checkError && <p style={{ fontSize: 12, color: '#a0524a' }}>{checkError}</p>}
+          </div>
+        )}
+      </div>
+
+      {draft.seeAlso && (
+        <div style={{ fontSize: 11, color: COLORS.sage, marginTop: 8 }}>See also: {draft.seeAlso}</div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10 }}>
+        <Button variant="danger" onClick={onRemove}>Remove</Button>
+      </div>
+    </Card>
+  );
+}
+
+function FogLog({ entries, saveEntries }) {
+  const [form, setForm] = useState(emptyFog());
+  const [filterStatus, setFilterStatus] = useState('All');
+
+  const addEntry = () => {
+    if (!form.concept.trim()) return;
+    saveEntries([{ ...form, id: Date.now() }, ...entries]);
+    setForm(emptyFog());
+  };
+  const removeEntry = (id) => { if (window.confirm('Remove this from the Fog Log?')) saveEntries(entries.filter(e => e.id !== id)); };
+  const updateEntry = (id, patch) => saveEntries(entries.map(e => e.id === id ? { ...e, ...patch } : e));
+
+  const runCheck = async (concept, explanation) => {
+    try {
+      const res = await fetch('/api/fog-log-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ concept, explanation }),
+      });
+      const data = await res.json();
+      if (data.error) return { error: data.error };
+      return data;
+    } catch {
+      return { error: 'network' };
+    }
+  };
+
+  const filtered = filterStatus === 'All' ? entries : entries.filter(e => e.status === filterStatus);
+
+  return (
+    <div>
+      <Section title="Log a sticking point">
+        <Card style={{ textAlign: 'left' }}>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <TextInput placeholder="Concept, idea, or word that isn't clicking" value={form.concept} onChange={e => setForm({ ...form, concept: e.target.value })} />
+            <TextInput placeholder="Where you hit it (reading, chapter, source)" value={form.context} onChange={e => setForm({ ...form, context: e.target.value })} />
+            <TextArea placeholder="What specifically isn't landing? One or two lines is plenty." value={form.whatIsntClicking} onChange={e => setForm({ ...form, whatIsntClicking: e.target.value })} style={{ minHeight: 50 }} />
+            <TextInput placeholder="See also (optional — a related Word Bank term, citation, etc.)" value={form.seeAlso} onChange={e => setForm({ ...form, seeAlso: e.target.value })} />
+            <Button onClick={addEntry}>Add to Fog Log</Button>
+          </div>
+        </Card>
+      </Section>
+      <Section
+        title={`Fog Log (${entries.length})`}
+        right={
+          <Select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ width: 160 }}>
+            <option value="All">All statuses</option>
+            {FOG_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+          </Select>
+        }
+      >
+        {filtered.map(e => (
+          <FogLogEntry key={e.id} entry={e} onUpdate={(patch) => updateEntry(e.id, patch)} onRemove={() => removeEntry(e.id)} onCheck={runCheck} />
+        ))}
+        {filtered.length === 0 && <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>Nothing here yet — that's a good thing.</p></Card>}
       </Section>
     </div>
   );
@@ -2053,13 +2375,32 @@ function Citations({ citations, saveCitations, catalogDuplicates = [] }) {
 
 // ---------------- QUESTIONS ----------------
 
+// Fixed, known-real search engines only — the AI never generates a URL;
+// it only ever returns a plain topic string, and these links are built
+// entirely client-side from that string. This is what keeps "resource
+// links" from ever being a hallucination risk.
+const RESEARCH_ENGINES = [
+  { label: 'PubMed', buildUrl: (q) => `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(q)}` },
+  { label: 'Google Scholar', buildUrl: (q) => `https://scholar.google.com/scholar?q=${encodeURIComponent(q)}` },
+  { label: 'Cochrane Library', buildUrl: (q) => `https://www.cochranelibrary.com/search?q=${encodeURIComponent(q)}` },
+  { label: 'Google', buildUrl: (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}` },
+];
+
 function Questions({ questions, saveQuestions }) {
   const [newQ, setNewQ] = useState('');
   const [drafts, setDrafts] = useState({});
+  const [thinking, setThinking] = useState({});
+  const [thoughtResults, setThoughtResults] = useState({});
+  const [thinkErrors, setThinkErrors] = useState({});
+  const [expanded, setExpanded] = useState({});
+
+  const toggleExpanded = (id) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
 
   const addQuestion = () => {
     if (!newQ.trim()) return;
-    saveQuestions([{ id: Date.now(), question: newQ, answer: '', support: '', date: new Date().toLocaleDateString() }, ...questions]);
+    const id = Date.now();
+    saveQuestions([{ id, question: newQ, answer: '', support: '', date: new Date().toLocaleDateString() }, ...questions]);
+    setExpanded(prev => ({ ...prev, [id]: true })); // a brand-new question opens expanded, since you're about to work on it
     setNewQ('');
   };
   const removeQuestion = (id) => { if (window.confirm('Delete this question permanently?')) saveQuestions(questions.filter(q => q.id !== id)); };
@@ -2068,6 +2409,27 @@ function Questions({ questions, saveQuestions }) {
     saveQuestions(questions.map(q => q.id === id ? { ...q, answer: d.answer ?? q.answer, support: d.support ?? q.support } : q));
   };
   const setDraft = (id, field, val) => setDrafts({ ...drafts, [id]: { ...drafts[id], [field]: val } });
+
+  const thinkItThrough = async (q) => {
+    setThinking({ ...thinking, [q.id]: true });
+    setThinkErrors({ ...thinkErrors, [q.id]: '' });
+    try {
+      const res = await fetch('/api/think-it-through', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: q.question }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setThinkErrors({ ...thinkErrors, [q.id]: 'Could not get help right now — try again in a moment.' });
+      } else {
+        setThoughtResults({ ...thoughtResults, [q.id]: data });
+      }
+    } catch {
+      setThinkErrors({ ...thinkErrors, [q.id]: 'Could not reach the AI helper — check your connection and try again.' });
+    }
+    setThinking({ ...thinking, [q.id]: false });
+  };
 
   const open = questions.filter(q => !q.answer);
   const answered = questions.filter(q => q.answer);
@@ -2085,14 +2447,64 @@ function Questions({ questions, saveQuestions }) {
       <Section title={`Open questions (${open.length})`}>
         {open.map(q => (
           <Card key={q.id} style={{ textAlign: 'left' }}>
-            <div style={{ fontSize: 13, fontWeight: 600, textAlign: 'center' }}>{q.question}</div>
-            <div style={{ fontSize: 12, color: COLORS.sage, marginBottom: 6, textAlign: 'center' }}>{q.date}</div>
-            <TextArea placeholder="Answer, once you've found it" value={drafts[q.id]?.answer ?? q.answer} onChange={e => setDraft(q.id, 'answer', e.target.value)} style={{ marginBottom: 6 }} />
-            <TextArea placeholder="What supports this answer?" value={drafts[q.id]?.support ?? q.support} onChange={e => setDraft(q.id, 'support', e.target.value)} />
-            <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginTop: 6 }}>
-              <Button onClick={() => saveAnswer(q.id)}>Save answer</Button>
-              <Button variant="danger" onClick={() => removeQuestion(q.id)}>Remove</Button>
+            <div onClick={() => toggleExpanded(q.id)} style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{q.question}</div>
+                <div style={{ fontSize: 12, color: COLORS.sage }}>{q.date}</div>
+              </div>
+              <span style={{ fontSize: 16, color: COLORS.sage, flexShrink: 0 }}>{expanded[q.id] ? '▾' : '▸'}</span>
             </div>
+
+            {expanded[q.id] && (
+              <div style={{ marginTop: 10 }}>
+                <TextArea placeholder="Answer, once you've found it" value={drafts[q.id]?.answer ?? q.answer} onChange={e => setDraft(q.id, 'answer', e.target.value)} style={{ marginBottom: 6 }} />
+                <TextArea placeholder="What supports this answer?" value={drafts[q.id]?.support ?? q.support} onChange={e => setDraft(q.id, 'support', e.target.value)} />
+                <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+                  <Button onClick={() => saveAnswer(q.id)}>Save answer</Button>
+                  <Button variant="secondary" onClick={() => thinkItThrough(q)} disabled={thinking[q.id]}>
+                    {thinking[q.id] ? 'Thinking...' : 'Help me think it through'}
+                  </Button>
+                  <Button variant="danger" onClick={() => removeQuestion(q.id)}>Remove</Button>
+                </div>
+
+                {thinkErrors[q.id] && <p style={{ fontSize: 12, color: '#a0524a', textAlign: 'center', marginTop: 6 }}>{thinkErrors[q.id]}</p>}
+
+                {thoughtResults[q.id] && (
+                  <div style={{ marginTop: 10, background: COLORS.lavenderLight, borderRadius: 9, padding: '10px 14px' }}>
+                    {thoughtResults[q.id].guidingQuestions?.length > 0 && (
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.ink, marginBottom: 4 }}>Questions to help you break this down:</div>
+                        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
+                          {thoughtResults[q.id].guidingQuestions.map((g, i) => <li key={i} style={{ marginBottom: 3 }}>{g}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                    {thoughtResults[q.id].researchDirections?.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.ink, marginBottom: 4 }}>Directions worth searching:</div>
+                        {thoughtResults[q.id].researchDirections.map((r, i) => (
+                          <div key={i} style={{ marginBottom: 8 }}>
+                            <div style={{ fontSize: 12 }}>{r.topic}</div>
+                            {r.why && <div style={{ fontSize: 11, color: COLORS.sage, fontStyle: 'italic' }}>{r.why}</div>}
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                              {RESEARCH_ENGINES.map(engine => (
+                                <a key={engine.label} href={engine.buildUrl(r.topic)} target="_blank" rel="noopener noreferrer"
+                                   style={{ fontSize: 11, color: COLORS.azure, textDecoration: 'underline' }}>
+                                  Search {engine.label}
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 10, color: COLORS.sage, marginTop: 4, fontStyle: 'italic' }}>
+                      These links run a real search on each site — they don't point to any specific paper, since an AI naming a specific study can confidently invent one that doesn't exist.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </Card>
         ))}
         {open.length === 0 && <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>No open questions right now.</p></Card>}
@@ -2100,10 +2512,17 @@ function Questions({ questions, saveQuestions }) {
       <Section title={`Answered (${answered.length})`}>
         {answered.map(q => (
           <Card key={q.id}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{q.question}</div>
-            <div style={{ fontSize: 13, marginTop: 6, color: COLORS.azure }}>{q.answer}</div>
-            {q.support && <div style={{ fontSize: 12, marginTop: 4, color: COLORS.sage }}>Support: {q.support}</div>}
-            <div style={{ marginTop: 6 }}><Button variant="danger" onClick={() => removeQuestion(q.id)}>Remove</Button></div>
+            <div onClick={() => toggleExpanded(q.id)} style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, textAlign: 'left' }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{q.question}</div>
+              <span style={{ fontSize: 16, color: COLORS.sage, flexShrink: 0 }}>{expanded[q.id] ? '▾' : '▸'}</span>
+            </div>
+            {expanded[q.id] && (
+              <div style={{ textAlign: 'left', marginTop: 8 }}>
+                <div style={{ fontSize: 13, color: COLORS.azure }}>{q.answer}</div>
+                {q.support && <div style={{ fontSize: 12, marginTop: 4, color: COLORS.sage }}>Support: {q.support}</div>}
+                <div style={{ marginTop: 6, textAlign: 'center' }}><Button variant="danger" onClick={() => removeQuestion(q.id)}>Remove</Button></div>
+              </div>
+            )}
           </Card>
         ))}
       </Section>
@@ -2113,8 +2532,32 @@ function Questions({ questions, saveQuestions }) {
 
 // ---------------- APP ----------------
 
-function GlobalSearch({ notes, library, citations, questions, mediaJournal, synthesisLog, tbr, wordBank, setTab }) {
+function GlobalSearch({ notes, library, citations, questions, mediaJournal, synthesisLog, tbr, wordBank, fogLog, setTab }) {
+  const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
+  const containerRef = React.useRef(null);
+  const inputRef = React.useRef(null);
+
+  useEffect(() => {
+    if (open && inputRef.current) inputRef.current.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    const handleEscape = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [open]);
+
   const results = useMemo(() => {
     if (!q.trim()) return [];
     const term = q.toLowerCase();
@@ -2127,23 +2570,44 @@ function GlobalSearch({ notes, library, citations, questions, mediaJournal, synt
     synthesisLog.forEach(s => { if ((s.headline + (s.insights || []).join(' ')).toLowerCase().includes(term)) out.push({ type: 'Synthesis', label: s.headline, tab: 'synthesis' }); });
     tbr.forEach(t => { if ((t.title + t.author + t.subject).toLowerCase().includes(term)) out.push({ type: 'TBR', label: t.title, tab: 'tbr' }); });
     wordBank.forEach(w => { if ((w.word + w.definition + w.source).toLowerCase().includes(term)) out.push({ type: 'Word Bank', label: w.word, tab: 'wordbank' }); });
+    fogLog.forEach(f => { if ((f.concept + f.whatIsntClicking + f.context).toLowerCase().includes(term)) out.push({ type: 'Fog Log', label: f.concept, tab: 'foglog' }); });
     return out.slice(0, 8);
-  }, [q, notes, library, citations, questions, mediaJournal, synthesisLog, tbr, wordBank]);
+  }, [q, notes, library, citations, questions, mediaJournal, synthesisLog, tbr, wordBank, fogLog]);
 
   return (
-    <div style={{ marginBottom: 20, position: 'relative' }}>
-      <TextInput placeholder="Search notes, library, citations, questions..." value={q} onChange={e => setQ(e.target.value)} />
-      {results.length > 0 && (
-        <div style={{ background: COLORS.white, border: `1px solid ${COLORS.lavenderLight}`, borderRadius: 10, marginTop: 6, overflow: 'hidden' }}>
-          {results.map((r, i) => (
-            <button key={i} onClick={() => { setTab(r.tab); setQ(''); }} style={{
-              display: 'block', width: '100%', textAlign: 'center', padding: '8px 12px', border: 'none',
-              borderBottom: i < results.length - 1 ? `1px solid ${COLORS.lavenderLight}` : 'none',
-              background: 'transparent', cursor: 'pointer', fontFamily: BODY_FONT, fontSize: 12,
-            }}>
-              <Badge color={COLORS.lavender}>{r.type}</Badge>{r.label}
-            </button>
-          ))}
+    <div ref={containerRef} style={{ position: 'fixed', top: 18, right: 18, zIndex: 50 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-label="Search"
+        style={{
+          width: 40, height: 40, borderRadius: '50%', border: `1px solid ${COLORS.lavenderLight}`,
+          background: COLORS.white, cursor: 'pointer', fontSize: 17, boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        🔍
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 48, right: 0, width: 280,
+          background: COLORS.white, border: `1px solid ${COLORS.lavenderLight}`, borderRadius: 10,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.15)', padding: 10,
+        }}>
+          <TextInput ref={inputRef} placeholder="Search notes, library, citations, questions..." value={q} onChange={e => setQ(e.target.value)} />
+          {results.length > 0 && (
+            <div style={{ border: `1px solid ${COLORS.lavenderLight}`, borderRadius: 10, marginTop: 6, overflow: 'hidden' }}>
+              {results.map((r, i) => (
+                <button key={i} onClick={() => { setTab(r.tab); setQ(''); setOpen(false); }} style={{
+                  display: 'block', width: '100%', textAlign: 'center', padding: '8px 12px', border: 'none',
+                  borderBottom: i < results.length - 1 ? `1px solid ${COLORS.lavenderLight}` : 'none',
+                  background: 'transparent', cursor: 'pointer', fontFamily: BODY_FONT, fontSize: 12,
+                }}>
+                  <Badge color={COLORS.lavender}>{r.type}</Badge>{r.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -2152,6 +2616,14 @@ function GlobalSearch({ notes, library, citations, questions, mediaJournal, synt
 
 function StudyHubContent({ syncPanelProps }) {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [mergeConflicts, setMergeConflicts] = useState(null);
+  useEffect(() => {
+    const stored = sessionStorage.getItem('rr-study-hub-merge-conflicts');
+    if (stored) {
+      try { setMergeConflicts(JSON.parse(stored)); } catch {}
+      sessionStorage.removeItem('rr-study-hub-merge-conflicts');
+    }
+  }, []);
   const [thesis, saveThesis, thesisLoaded] = useStore('rr-phd-thesis', { statement: '', challenges: [], graceLog: [] });
   const [tasks, saveTasks] = useStore('rr-phd-tasks', SEED_SYLLABUS.map((t, i) => ({ ...t, id: i + 1 })));
   const [checkpoints, saveCheckpoints] = useStore('rr-phd-checkpoints', SEED_CHECKPOINTS.map((c, i) => ({ ...c, id: i + 1 })));
@@ -2201,6 +2673,7 @@ function StudyHubContent({ syncPanelProps }) {
   const [mediaJournal, saveMediaJournal] = useStore('rr-phd-media-journal', []);
   const [tbr, saveTbr] = useStore('rr-phd-tbr', []);
   const [wordBank, saveWordBank] = useStore('rr-phd-wordbank', []);
+  const [fogLog, saveFogLog] = useStore('rr-phd-foglog', []);
   const [mediaDraftSeed, setMediaDraftSeed] = useState(null);
   const [synthesisLog, saveSynthesisLog] = useStore('rr-phd-synthesis', []);
   const [bridge, saveBridge] = useStore('rr-phd-library-bridge', { siteUrl: 'https://root-restore-library-tracker.netlify.app', libraryKey: '', importedIds: [] });
@@ -2233,11 +2706,21 @@ function StudyHubContent({ syncPanelProps }) {
           ))}
         </div>
 
-        <GlobalSearch notes={notes} library={library} citations={citations} questions={questions} mediaJournal={mediaJournal} synthesisLog={synthesisLog} tbr={tbr} wordBank={wordBank} setTab={setActiveTab} />
+        <GlobalSearch notes={notes} library={library} citations={citations} questions={questions} mediaJournal={mediaJournal} synthesisLog={synthesisLog} tbr={tbr} wordBank={wordBank} fogLog={fogLog} setTab={setActiveTab} />
+
+        {mergeConflicts && mergeConflicts.length > 0 && (
+          <div style={{ background: '#fbeceb', border: '1px solid #e3b3b3', borderRadius: 9, padding: '10px 16px', margin: '14px 0', textAlign: 'left', fontSize: 12, color: '#a0524a' }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Merge complete — {mergeConflicts.length} field{mergeConflicts.length === 1 ? '' : 's'} need a quick manual check:</div>
+            <ul style={{ margin: '4px 0 6px', paddingLeft: 18 }}>
+              {mergeConflicts.map((c, i) => <li key={i}>{c}</li>)}
+            </ul>
+            <Button variant="secondary" onClick={() => setMergeConflicts(null)}>Dismiss</Button>
+          </div>
+        )}
 
         {!thesisLoaded ? <p style={{ fontSize: 13, color: COLORS.sage }}>Loading your hub...</p> : (
           <div style={{ textAlign: 'center' }}>
-            {activeTab === 'dashboard' && <Dashboard thesis={thesis} tasks={tasks} questions={questions} checkpoints={checkpoints} cases={cases} mediaJournal={mediaJournal} synthesisLog={synthesisLog} wordBank={wordBank} setTab={setActiveTab} syncPanelProps={syncPanelProps} />}
+            {activeTab === 'dashboard' && <Dashboard thesis={thesis} tasks={tasks} questions={questions} checkpoints={checkpoints} cases={cases} mediaJournal={mediaJournal} synthesisLog={synthesisLog} wordBank={wordBank} fogLog={fogLog} setTab={setActiveTab} syncPanelProps={syncPanelProps} />}
             {activeTab === 'syllabus' && <Syllabus tasks={tasks} saveTasks={saveTasks} />}
             {activeTab === 'checkpoints' && <Checkpoints checkpoints={checkpoints} saveCheckpoints={saveCheckpoints} tasks={tasks} />}
             {activeTab === 'thesis' && <Thesis thesis={thesis} saveThesis={saveThesis} />}
@@ -2250,6 +2733,7 @@ function StudyHubContent({ syncPanelProps }) {
               }}
             />}
             {activeTab === 'wordbank' && <WordBank words={wordBank} saveWords={saveWordBank} bridge={bridge} saveBridge={saveBridge} onGoToMediaJournal={() => setActiveTab('media')} />}
+            {activeTab === 'foglog' && <FogLog entries={fogLog} saveEntries={saveFogLog} />}
             {activeTab === 'media' && <DissertationMedia
               entries={mediaJournal} saveEntries={saveMediaJournal}
               bridge={bridge} saveBridge={saveBridge}
@@ -2406,6 +2890,36 @@ export default function StudyHub() {
     }
   };
 
+  const mergeSync = async (inputKey) => {
+    const trimmed = inputKey.trim();
+    if (!trimmed) return;
+    try {
+      const res = await fetch(`${SYNC_URL}?key=${encodeURIComponent(trimmed)}`);
+      const json = await res.json();
+      const cloudData = json.data || {};
+      const localData = getAllHubData();
+      const { merged, conflicts } = mergeAllHubData(localData, cloudData);
+
+      const proceed = window.confirm(
+        Object.keys(cloudData).length === 0
+          ? 'No data was found yet for that key — it may be brand new, or the key may be mistyped. If you continue, this device\'s current data will become the starting point for that key. Continue?'
+          : `This will combine this device's data with the cloud copy under that key — nothing gets deleted.${conflicts.length ? ` ${conflicts.length} field(s) had conflicting values and will need a quick manual check afterward.` : ''} Continue?`
+      );
+      if (!proceed) return;
+
+      restoreAllHubData(merged);
+      localStorage.setItem(SYNC_KEY_STORAGE, trimmed);
+      if (conflicts.length) {
+        // stash for a one-time notice after reload, since useStore hooks
+        // need the reload to pick up merged data anyway
+        sessionStorage.setItem('rr-study-hub-merge-conflicts', JSON.stringify(conflicts));
+      }
+      window.location.reload();
+    } catch (e) {
+      alert('Could not reach the sync server. Check the key and try again.');
+    }
+  };
+
   const stopSync = () => {
     if (!window.confirm('Stop syncing this device? Your data stays on this device but will no longer update from or push to the shared key.')) return;
     localStorage.removeItem(SYNC_KEY_STORAGE);
@@ -2443,7 +2957,7 @@ export default function StudyHub() {
     <StudyHubContent
       syncPanelProps={{
         syncKey, syncStatus, lastSyncedAt,
-        onStartSync: startSync, onJoinSync: joinSync, onStopSync: stopSync, onManualPush: manualPush,
+        onStartSync: startSync, onJoinSync: joinSync, onMergeSync: mergeSync, onStopSync: stopSync, onManualPush: manualPush,
       }}
     />
   );
