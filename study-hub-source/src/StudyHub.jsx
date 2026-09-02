@@ -352,7 +352,19 @@ function Badge({ children, color, textColor }) {
 function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal, synthesisLog, wordBank, fogLog, setTab, syncPanelProps }) {
   const openQuestions = questions.filter(q => !q.answer).length;
   const totalHours = tasks.reduce((s, t) => s + (Number(t.hours) || 0), 0);
-  const doneHours = tasks.filter(t => t.status === 'done').reduce((s, t) => s + (Number(t.hours) || 0), 0);
+  // "Hours complete" now reflects real logged time where you've broken an
+  // item into sessions — summing hrs from sessions actually marked done —
+  // rather than crediting the item's full estimated hours the moment its
+  // status flips to Done. Items with no sessions logged yet fall back to
+  // the original behavior (full estimated hours once marked Done), so
+  // nothing changes for syllabus items you haven't broken down.
+  const doneHours = tasks.reduce((s, t) => {
+    const sessions = t.sessions || [];
+    if (sessions.length > 0) {
+      return s + sessions.filter(sess => sess.done).reduce((sum, sess) => sum + (Number(sess.hrs) || 0), 0);
+    }
+    return s + (t.status === 'done' ? (Number(t.hours) || 0) : 0);
+  }, 0);
   const openCheckpoints = checkpoints.filter(c => !c.done).length;
   const contradicting = mediaJournal.filter(m => m.stance === 'Contradicts' || m.stance === 'Complicates').length;
   const wordToRevisit = useMemo(() => {
@@ -445,6 +457,8 @@ function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal,
 
 function Syllabus({ tasks, saveTasks }) {
   const [form, setForm] = useState({ title: '', quarter: 'Q1', source: '', hours: '', status: 'planned' });
+  const [expanded, setExpanded] = useState({});
+  const [sessionDrafts, setSessionDrafts] = useState({});
   const quarters = ['Q1','Q2','Q3','Q4','Q5','Q6','Q7','Q8'];
   const quarterLabels = {
     Q1: 'Q1 · Sep–Nov 2026 · Foundations', Q2: 'Q2 · Dec 2026–Feb 2027 · Pharmacology & Digestive',
@@ -455,11 +469,43 @@ function Syllabus({ tasks, saveTasks }) {
 
   const addTask = () => {
     if (!form.title.trim()) return;
-    saveTasks([...tasks, { ...form, id: Date.now() }]);
+    saveTasks([...tasks, { ...form, id: Date.now(), sessions: [] }]);
     setForm({ title: '', quarter: form.quarter, source: '', hours: '', status: 'planned' });
   };
   const updateStatus = (id, status) => saveTasks(tasks.map(t => t.id === id ? { ...t, status } : t));
   const removeTask = (id) => saveTasks(tasks.filter(t => t.id !== id));
+
+  const toggleExpanded = (id) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
+  const setSessionDraft = (taskId, field, val) => setSessionDrafts(prev => ({ ...prev, [taskId]: { ...prev[taskId], [field]: val } }));
+
+  const addSession = (taskId) => {
+    const draft = sessionDrafts[taskId] || {};
+    const sessionId = Date.now();
+    saveTasks(tasks.map(t => {
+      if (t.id !== taskId) return t;
+      const existing = t.sessions || [];
+      // Derive the next default number from the highest "Session N" label
+      // already present, not the array length — otherwise removing a
+      // middle session and adding a new one can produce two sessions with
+      // the same auto-generated label (e.g. two "Session 3"s).
+      const highestN = existing.reduce((max, s) => {
+        const m = /^Session (\d+)$/.exec(s.label || '');
+        return m ? Math.max(max, parseInt(m[1], 10)) : max;
+      }, 0);
+      return { ...t, sessions: [...existing, { id: sessionId, label: draft.label?.trim() || `Session ${highestN + 1}`, hrs: draft.hrs || '', date: draft.date || '', done: false }] };
+    }));
+    setSessionDrafts(prev => ({ ...prev, [taskId]: { label: '', hrs: '', date: '' } }));
+  };
+  const toggleSession = (taskId, sessionId) => {
+    saveTasks(tasks.map(t => t.id === taskId
+      ? { ...t, sessions: (t.sessions || []).map(s => s.id === sessionId ? { ...s, done: !s.done } : s) }
+      : t));
+  };
+  const removeSession = (taskId, sessionId) => {
+    saveTasks(tasks.map(t => t.id === taskId
+      ? { ...t, sessions: (t.sessions || []).filter(s => s.id !== sessionId) }
+      : t));
+  };
 
   return (
     <div>
@@ -482,20 +528,66 @@ function Syllabus({ tasks, saveTasks }) {
         const qHours = items.reduce((s, t) => s + (Number(t.hours) || 0), 0);
         return (
           <Collapsible key={q} title={quarterLabels[q] || q} badge={`${items.length} items · ${qHours} hrs`}>
-            {items.map(t => (
-              <Card key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left' }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{t.title}</div>
-                  <div style={{ fontSize: 12, color: COLORS.sage }}>{t.source} {t.hours ? `· ${t.hours} hrs` : ''}</div>
-                </div>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <Select value={t.status} onChange={e => updateStatus(t.id, e.target.value)}>
-                    <option value="planned">Planned</option><option value="in-progress">In progress</option><option value="done">Done</option>
-                  </Select>
-                  <Button variant="danger" onClick={() => removeTask(t.id)}>Remove</Button>
-                </div>
-              </Card>
-            ))}
+            {items.map(t => {
+              const sessions = t.sessions || [];
+              const doneSessions = sessions.filter(s => s.done).length;
+              const loggedHrs = sessions.reduce((s, sess) => s + (Number(sess.hrs) || 0), 0);
+              const allSessionsDone = sessions.length > 0 && doneSessions === sessions.length;
+              const isOpen = !!expanded[t.id];
+              const draft = sessionDrafts[t.id] || {};
+              return (
+                <Card key={t.id} style={{ textAlign: 'left' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div onClick={() => toggleExpanded(t.id)} style={{ cursor: 'pointer', flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{t.title} <span style={{ color: COLORS.sage, fontWeight: 400 }}>{isOpen ? '▾' : '▸'}</span></div>
+                      <div style={{ fontSize: 12, color: COLORS.sage }}>{t.source} {t.hours ? `· ${t.hours} hrs` : ''}</div>
+                      {sessions.length > 0 && (
+                        <div style={{ fontSize: 11, color: COLORS.azure, marginTop: 2 }}>
+                          {doneSessions}/{sessions.length} sessions{loggedHrs ? ` · ${loggedHrs} hrs logged` : ''}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <Select value={t.status} onChange={e => updateStatus(t.id, e.target.value)}>
+                        <option value="planned">Planned</option><option value="in-progress">In progress</option><option value="done">Done</option>
+                      </Select>
+                      <Button variant="danger" onClick={() => removeTask(t.id)}>Remove</Button>
+                    </div>
+                  </div>
+
+                  {isOpen && (
+                    <div style={{ marginTop: 10, borderTop: `1px solid ${COLORS.lavenderLight}`, paddingTop: 10 }}>
+                      {allSessionsDone && t.status !== 'done' && (
+                        <div style={{ fontSize: 12, background: COLORS.lavenderLight, borderRadius: 9, padding: '8px 12px', marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <span>All logged sessions are done — mark the whole item Done?</span>
+                          <Button onClick={() => updateStatus(t.id, 'done')}>Mark Done</Button>
+                        </div>
+                      )}
+                      {sessions.map(s => (
+                        <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 13 }}>
+                          <input type="checkbox" checked={!!s.done} onChange={() => toggleSession(t.id, s.id)} />
+                          <span style={{ flex: 1, textDecoration: s.done ? 'line-through' : 'none', color: s.done ? COLORS.sage : COLORS.ink }}>
+                            {s.label}{s.hrs ? ` · ${s.hrs} hrs` : ''}{s.date ? ` · ${s.date}` : ''}
+                          </span>
+                          <button onClick={() => removeSession(t.id, s.id)} style={{ border: 'none', background: 'none', color: COLORS.sage, cursor: 'pointer', fontSize: 12 }}>Remove</button>
+                        </div>
+                      ))}
+                      {sessions.length === 0 && <p style={{ fontSize: 12, color: COLORS.sage, margin: '0 0 8px' }}>No sessions logged yet — break this item into however many sittings it actually takes.</p>}
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 130px auto', gap: 6, marginTop: 8 }}>
+                        <TextInput placeholder="Session label (optional)" value={draft.label || ''} onChange={e => setSessionDraft(t.id, 'label', e.target.value)} />
+                        <TextInput placeholder="Hrs" type="number" value={draft.hrs || ''} onChange={e => setSessionDraft(t.id, 'hrs', e.target.value)} />
+                        <TextInput placeholder="Date (optional)" type="date" value={draft.date || ''} onChange={e => setSessionDraft(t.id, 'date', e.target.value)} />
+                        <Button variant="secondary" onClick={() => addSession(t.id)}>Add session</Button>
+                      </div>
+                      <p style={{ fontSize: 10, color: COLORS.sage, marginTop: 6, fontStyle: 'italic' }}>
+                        Sessions that aren't done yet flow into Brain Inbox's Study Hub Tasks bridge automatically, so you can schedule and check them off there too.
+                      </p>
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
           </Collapsible>
         );
       })}
