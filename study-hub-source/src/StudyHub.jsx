@@ -349,6 +349,17 @@ function Badge({ children, color, textColor }) {
 
 // ---------------- DASHBOARD ----------------
 
+// Sessions are logged in minutes (she schedules in 45-minute blocks), but a
+// small number of sessions may already exist from before this changed,
+// stored under the old `hrs` field. Reading through this helper everywhere
+// means old entries still display and total correctly — converted once at
+// read time — without needing to silently rewrite anyone's existing data.
+function sessionMinutes(s) {
+  if (s.minutes != null && s.minutes !== '') return Number(s.minutes) || 0;
+  if (s.hrs) return (Number(s.hrs) || 0) * 60;
+  return 0;
+}
+
 function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal, synthesisLog, wordBank, fogLog, setTab, syncPanelProps }) {
   const openQuestions = questions.filter(q => !q.answer).length;
   const totalHours = tasks.reduce((s, t) => s + (Number(t.hours) || 0), 0);
@@ -361,7 +372,8 @@ function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal,
   const doneHours = tasks.reduce((s, t) => {
     const sessions = t.sessions || [];
     if (sessions.length > 0) {
-      return s + sessions.filter(sess => sess.done).reduce((sum, sess) => sum + (Number(sess.hrs) || 0), 0);
+      const doneMinutes = sessions.filter(sess => sess.done).reduce((sum, sess) => sum + sessionMinutes(sess), 0);
+      return s + (doneMinutes / 60);
     }
     return s + (t.status === 'done' ? (Number(t.hours) || 0) : 0);
   }, 0);
@@ -391,7 +403,7 @@ function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal,
       </Section>
       <Section title="At a glance">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
-          <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{doneHours}/{totalHours}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Hours complete</div></Card>
+          <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{Math.round(doneHours * 10) / 10}/{totalHours}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Hours complete</div></Card>
           <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{tasks.filter(t=>t.status==='done').length}/{tasks.length}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Syllabus items</div></Card>
           <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{cases.length}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Cases logged</div></Card>
           <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{openCheckpoints}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Checkpoints open</div></Card>
@@ -403,6 +415,14 @@ function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal,
           <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{mediaJournal.length}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Media logged</div></Card>
           <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{contradicting}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Complicate/contradict thesis</div></Card>
           <Card><div style={{ fontSize: 22, fontFamily: DATA_FONT, color: COLORS.azure }}>{synthesisLog.length}</div><div style={{ fontSize: 12, color: COLORS.sage }}>Weekly syntheses saved</div></Card>
+        </div>
+      </Section>
+      <Section title="G.R.A.C.E. evidence trail">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+          {GRACE_LETTERS.map(letter => {
+            const count = (thesis.graceLog || []).filter(e => e.letter === letter).length;
+            return <Card key={letter}><div style={{ fontSize: 18, fontFamily: DATA_FONT, color: COLORS.sage }}>{count}</div><div style={{ fontSize: 11, color: COLORS.ink }}>{letter}</div></Card>;
+          })}
         </div>
       </Section>
       <Section title="Word to revisit">
@@ -429,18 +449,12 @@ function Dashboard({ thesis, tasks, questions, checkpoints, cases, mediaJournal,
         ) : <Card><p style={{ margin: 0, fontSize: 13, color: COLORS.sage }}>Nothing foggy logged right now.</p></Card>}
       </Section>
       <Section title="Sync across devices">
-        <SyncPanel {...syncPanelProps} />
+        <Collapsible title="Sync settings" defaultOpen={false} badge={syncPanelProps.syncKey ? 'Connected' : 'Not connected'}>
+          <SyncPanel {...syncPanelProps} />
+        </Collapsible>
       </Section>
       <Section title="Backup">
         <ExportImport />
-      </Section>
-      <Section title="G.R.A.C.E. evidence trail">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
-          {GRACE_LETTERS.map(letter => {
-            const count = (thesis.graceLog || []).filter(e => e.letter === letter).length;
-            return <Card key={letter}><div style={{ fontSize: 18, fontFamily: DATA_FONT, color: COLORS.sage }}>{count}</div><div style={{ fontSize: 11, color: COLORS.ink }}>{letter}</div></Card>;
-          })}
-        </div>
       </Section>
       <Section title="Quick links">
         <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -492,9 +506,9 @@ function Syllabus({ tasks, saveTasks }) {
         const m = /^Session (\d+)$/.exec(s.label || '');
         return m ? Math.max(max, parseInt(m[1], 10)) : max;
       }, 0);
-      return { ...t, sessions: [...existing, { id: sessionId, label: draft.label?.trim() || `Session ${highestN + 1}`, hrs: draft.hrs || '', date: draft.date || '', done: false }] };
+      return { ...t, sessions: [...existing, { id: sessionId, label: draft.label?.trim() || `Session ${highestN + 1}`, minutes: draft.minutes || '', date: draft.date || '', done: false }] };
     }));
-    setSessionDrafts(prev => ({ ...prev, [taskId]: { label: '', hrs: '', date: '' } }));
+    setSessionDrafts(prev => ({ ...prev, [taskId]: { label: '', minutes: '', date: '' } }));
   };
   const toggleSession = (taskId, sessionId) => {
     saveTasks(tasks.map(t => t.id === taskId
@@ -531,7 +545,7 @@ function Syllabus({ tasks, saveTasks }) {
             {items.map(t => {
               const sessions = t.sessions || [];
               const doneSessions = sessions.filter(s => s.done).length;
-              const loggedHrs = sessions.reduce((s, sess) => s + (Number(sess.hrs) || 0), 0);
+              const loggedMinutes = sessions.reduce((s, sess) => s + sessionMinutes(sess), 0);
               const allSessionsDone = sessions.length > 0 && doneSessions === sessions.length;
               const isOpen = !!expanded[t.id];
               const draft = sessionDrafts[t.id] || {};
@@ -543,7 +557,7 @@ function Syllabus({ tasks, saveTasks }) {
                       <div style={{ fontSize: 12, color: COLORS.sage }}>{t.source} {t.hours ? `· ${t.hours} hrs` : ''}</div>
                       {sessions.length > 0 && (
                         <div style={{ fontSize: 11, color: COLORS.azure, marginTop: 2 }}>
-                          {doneSessions}/{sessions.length} sessions{loggedHrs ? ` · ${loggedHrs} hrs logged` : ''}
+                          {doneSessions}/{sessions.length} sessions{loggedMinutes ? ` · ${loggedMinutes} min logged` : ''}
                         </div>
                       )}
                     </div>
@@ -567,7 +581,7 @@ function Syllabus({ tasks, saveTasks }) {
                         <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 13 }}>
                           <input type="checkbox" checked={!!s.done} onChange={() => toggleSession(t.id, s.id)} />
                           <span style={{ flex: 1, textDecoration: s.done ? 'line-through' : 'none', color: s.done ? COLORS.sage : COLORS.ink }}>
-                            {s.label}{s.hrs ? ` · ${s.hrs} hrs` : ''}{s.date ? ` · ${s.date}` : ''}
+                            {s.label}{sessionMinutes(s) ? ` · ${sessionMinutes(s)} min` : ''}{s.date ? ` · ${s.date}` : ''}
                           </span>
                           <button onClick={() => removeSession(t.id, s.id)} style={{ border: 'none', background: 'none', color: COLORS.sage, cursor: 'pointer', fontSize: 12 }}>Remove</button>
                         </div>
@@ -576,7 +590,7 @@ function Syllabus({ tasks, saveTasks }) {
 
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 130px auto', gap: 6, marginTop: 8 }}>
                         <TextInput placeholder="Session label (optional)" value={draft.label || ''} onChange={e => setSessionDraft(t.id, 'label', e.target.value)} />
-                        <TextInput placeholder="Hrs" type="number" value={draft.hrs || ''} onChange={e => setSessionDraft(t.id, 'hrs', e.target.value)} />
+                        <TextInput placeholder="Min (e.g. 45)" type="number" step="5" value={draft.minutes || ''} onChange={e => setSessionDraft(t.id, 'minutes', e.target.value)} />
                         <TextInput placeholder="Date (optional)" type="date" value={draft.date || ''} onChange={e => setSessionDraft(t.id, 'date', e.target.value)} />
                         <Button variant="secondary" onClick={() => addSession(t.id)}>Add session</Button>
                       </div>
